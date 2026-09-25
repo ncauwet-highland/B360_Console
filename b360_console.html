@@ -1,0 +1,693 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B360 Console</title>
+<!--
+  Terminal page for the B360 console application.
+
+  Line-oriented on purpose. The device never emits an escape sequence and does
+  not echo -- loopback.c says so and tells clients to use local echo -- so a
+  VT100 screen-grid emulator would sit entirely unexercised. The only terminal
+  behaviour worth having is honouring a bare CR as an overwrite and dropping
+  stray escape bytes instead of printing them as mojibake.
+
+  All I/O goes through window.pywebview.api, which owns the one connection the
+  board allows.
+-->
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --ink:#1d2126; --dim:#666e78;
+  --line:#d6dae0; --accent:#2f7fd0; --ok:#2aa05a; --err:#c4384f;
+  --field:#fff; --hover:#eef2f7;
+  /* The scrollback follows the theme too -- a light chrome with a dark pane was
+     the "somewhat mixed" look this replaces. */
+  --term-bg:#fdfdfe; --term-ink:#1d2126; --term-dim:#79818b;
+  --t-cmd:#1b5e9e; --t-err:#c4384f;
+  --t-plot-bg:#eef6ee; --t-plot-fg:#1f6b3a; --t-plot-line:#bcd8c2;
+  --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+}
+:root[data-theme="dark"]{
+  --bg:#14181d; --panel:#1c2128; --ink:#d6dbe1; --dim:#8b949e;
+  --line:#2d333b; --accent:#4a9eea; --ok:#3fb950; --err:#ff8b8b;
+  --field:#0f1317; --hover:#262c34;
+  --term-bg:#0f1317; --term-ink:#d6dbe1; --term-dim:#7d8590;
+  --t-cmd:#8fc2f0; --t-err:#ff8b8b;
+  --t-plot-bg:#2a313a; --t-plot-fg:#9fd0a0; --t-plot-line:#3a4550;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;display:flex;flex-direction:column;background:var(--bg);color:var(--ink);
+     font:13px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;flex:none;
+       padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+h1{font-size:14px;font-weight:600;margin:0 6px 0 0;white-space:nowrap}
+button,select,input{font:inherit;color:inherit;background:var(--field);
+       border:1px solid var(--line);border-radius:5px;padding:4px 9px}
+button{cursor:pointer}
+button:hover:not(:disabled){background:var(--hover);border-color:var(--dim)}
+button:disabled{opacity:.5;cursor:default}
+button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+button.pri:hover:not(:disabled){background:#2569ad;border-color:#2569ad}
+#host{width:190px}
+#port{width:74px}
+#serialport{min-width:170px}
+.spacer{flex:1}
+#dot{width:9px;height:9px;border-radius:50%;background:#c4c9d0;flex:none}
+#dot.on{background:var(--ok)}
+#dot.busy{background:#e2a11d}
+#dot.stale{background:#c4c9d0}
+#state{color:var(--dim);white-space:nowrap}
+#term{flex:1;min-height:0;overflow:auto;background:var(--term-bg);color:var(--term-ink);
+      font:12.5px/1.5 var(--mono);padding:10px 12px;white-space:pre-wrap;
+      word-break:break-word;overflow-wrap:anywhere}
+/* Only the transcript is selectable, and inside it only the traffic: what was
+   sent and what came back. The host's own chatter and the Plot button are not
+   part of a session and should not land in a paste. Chrome drops a
+   user-select:none element out of a selection that spans it, so dragging across
+   one copies the lines either side without it.
+   The blanket rule undoes pywebview's text_select=True, which turns selection on
+   for the whole body (webview/js/customize.js:4-5). */
+body{user-select:none}
+#term{user-select:text}
+#term .note,
+#term .plot{user-select:none}
+#term .cmd{color:var(--t-cmd)}
+#term .err{color:var(--t-err)}
+#term .note{color:var(--term-dim);font-style:italic}
+#term.quiet .note{display:none}
+#term .plot{display:inline-block;margin:4px 0;padding:2px 9px;border-radius:5px;
+      border:1px solid var(--t-plot-line);background:var(--t-plot-bg);
+      color:var(--t-plot-fg);cursor:pointer;font:inherit}
+#term .plot:hover{filter:brightness(1.08)}
+footer{flex:none;display:flex;gap:8px;align-items:center;padding:8px 12px;
+       background:var(--panel);border-top:1px solid var(--line)}
+#prompt{font:13px var(--mono);color:var(--dim)}
+#entry{flex:1;font:13px var(--mono)}
+#entry:disabled{background:var(--bg)}
+.barrow{flex:none;display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+        padding:5px 12px;background:var(--panel);border-top:1px solid var(--line);
+        color:var(--dim);font-size:11.5px}
+.barrow code{font-family:var(--mono)}
+#capdirc{font-family:var(--mono);word-break:break-all;color:var(--ink)}
+.barrow button{padding:2px 8px;font-size:11.5px}
+.barrow label{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+/* Right-click menu for the transcript. WebView2's own menu is disabled unless
+   pywebview is in debug mode, so the page provides one. */
+#ctx{position:fixed;z-index:60;display:none;flex-direction:column;min-width:128px;
+     background:var(--panel);border:1px solid var(--line);border-radius:6px;
+     padding:4px;box-shadow:0 6px 18px rgba(0,0,0,.20)}
+#ctx.on{display:flex}
+#ctx button{border:0;background:none;text-align:left;padding:5px 10px;
+     border-radius:4px;font:inherit;color:inherit;cursor:pointer}
+#ctx button:hover:not(:disabled){background:var(--hover)}
+#ctx button:disabled{opacity:.45;cursor:default}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>B360 Console</h1>
+  <select id="kind">
+    <option value="tcp">TCP</option>
+    <option value="serial">USB serial</option>
+  </select>
+  <span id="tcpfields">
+    <input type="text" id="host" placeholder="192.168.0.25 or B360-1234.local">
+    <input type="number" id="port" value="5007" title="TCP command port (5007)">
+  </span>
+  <span id="serialfields" hidden>
+    <select id="serialport"></select>
+    <button id="rescan" title="rescan ports">&#8635;</button>
+  </span>
+  <select id="eol" title="what Enter sends; over USB a CRLF terminates twice and draws an extra reply">
+    <option value="crlf">CR+LF</option>
+    <option value="cr">CR</option>
+    <option value="lf">LF</option>
+  </select>
+  <button class="pri" id="connect">Connect</button>
+  <span id="dot"></span><span id="state">not connected</span>
+  <span class="spacer"></span>
+  <select id="theme" title="applies to this window and the waveform window">
+    <option value="light">Light</option>
+    <option value="dark">Dark</option>
+  </select>
+  <button id="plotwin">Waveform window</button>
+  <button id="clear">Clear</button>
+  <label title="the app's own grey lines -- captures, auto-save, connection notices. Commands and board replies are never hidden."><input
+    type="checkbox" id="actlog" checked> activity log</label>
+</header>
+
+<div id="term" tabindex="0"></div>
+
+<footer>
+  <span id="prompt">&gt;</span>
+  <input type="text" id="entry" autocomplete="off" spellcheck="false" disabled
+         placeholder="connect first">
+  <button id="send" disabled>Send</button>
+</footer>
+<div class="barrow">
+  <span>Captures:</span><span id="capdirc">&mdash;</span>
+  <button id="capdirbtn">Change folder&hellip;</button>
+  <label><input type="checkbox" id="capauto" checked> auto-save</label>
+</div>
+<div class="barrow">Up/Down for history &middot; Enter alone asks the board what it is
+  &middot; several commands per line separated by <code>;</code>
+  &middot; a <code>WR</code> reply can be plotted from the scrollback</div>
+
+<div id="ctx">
+  <button data-act="copy">Copy</button>
+  <button data-act="selall">Select all</button>
+</div>
+
+<script>
+'use strict';
+
+var $ = function(id){ return document.getElementById(id); };
+var term = $('term');
+
+var connected = false;
+var busy = false;
+var cmdHistory = [];   /* not `history`: that is window.history, and assigning
+                         to it under strict mode throws and kills the script */
+var histIdx = 0;
+var pending = '';          /* what the user was typing before browsing history */
+
+/* ------------------------------------------------------------- scrollback --- */
+
+var MAX_NODES = 4000;      /* bounded so a long session cannot grow forever */
+
+function atBottom(){
+  return term.scrollHeight - term.scrollTop - term.clientHeight < 24;
+}
+
+function write(text, cls){
+  if (text === '') return;
+  var stick = atBottom();
+  var span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = text;
+  term.appendChild(span);
+  while (term.childNodes.length > MAX_NODES) term.removeChild(term.firstChild);
+  if (stick) term.scrollTop = term.scrollHeight;
+}
+
+function writeLine(text, cls){ write(text + '\n', cls); }
+
+/**
+ * Make device output printable.
+ *
+ * Strips escape sequences rather than rendering them as mojibake -- the device
+ * does not send any, but a wrong baud rate or a half-read reply can produce
+ * stray bytes. CR/LF pairs arrive both ways round: replies use "\r\n" and ID
+ * uses "\n\r", so both collapse to one newline. A surviving bare CR keeps its
+ * terminal meaning of "overwrite this line".
+ */
+function clean(s){
+  s = s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '')
+       .replace(/\x1b[@-_]/g, '')
+       .replace(/[\x00\x07\x0b\x0c]/g, '');
+  s = s.replace(/\r\n|\n\r/g, '\n');
+  return s.split('\n').map(function(line){
+    var i = line.lastIndexOf('\r');
+    return i < 0 ? line : line.slice(i + 1);
+  }).join('\n');
+}
+
+/* ------------------------------------------------------------------ state --- */
+
+function setState(text, mode){
+  $('state').textContent = text;
+  var dot = $('dot');
+  dot.className = mode || '';
+}
+
+function setBusy(on){
+  busy = on;
+  $('entry').disabled = on || !connected;
+  $('send').disabled = on || !connected;
+  $('connect').disabled = on;
+  if (on) setState('working…', 'busy');
+  else if (connected) setState('connected', 'on');
+  if (!on && connected) $('entry').focus();
+}
+
+function setConnected(on, label){
+  connected = on;
+  $('connect').textContent = on ? 'Disconnect' : 'Connect';
+  $('connect').classList.toggle('pri', !on);
+  $('entry').disabled = !on;
+  $('send').disabled = !on;
+  $('entry').placeholder = on ? 'type a command' : 'connect first';
+  $('kind').disabled = on;
+  setState(on ? (label || 'connected') : 'not connected', on ? 'on' : '');
+  if (on) $('entry').focus();
+}
+
+/* -------------------------------------------------------------- api bridge --- */
+
+var BRIDGE_MSG = 'a web browser cannot open a TCP or serial connection \u2014 '
+               + 'run B360_console.exe';
+
+/* Inside the app this is the real bridge. Opened as a file in a browser there
+   is none, so hand back a stand-in whose every call rejects. Each call site
+   already has a .catch, so the UI unwinds instead of freezing half-way
+   through "connecting..." with no error and no timeout. */
+var bridgeStub = null;
+function api(){
+  if (window.pywebview && window.pywebview.api) return window.pywebview.api;
+  if (!bridgeStub){
+    bridgeStub = {};
+    ['get_defaults', 'list_serial', 'connect', 'disconnect', 'send', 'set_eol',
+     'set_theme', 'capture', 'save_capture', 'plot_text', 'show_plot',
+     'save_csv', 'choose_save_dir', 'set_autosave',
+     'set_activity_log'].forEach(function(m){
+      bridgeStub[m] = function(){ return Promise.reject(new Error(BRIDGE_MSG)); };
+    });
+  }
+  return bridgeStub;
+}
+
+function fail(prefix, err){
+  writeLine(prefix + ': ' + (err && err.message ? err.message : err), 'err');
+}
+
+/* ----------------------------------------------------------------- theme --- */
+
+/** Apply a theme locally. The host is what keeps both windows in step. */
+function setTheme(mode){
+  if (mode === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');
+  $('theme').value = (mode === 'dark') ? 'dark' : 'light';
+}
+window.b360_set_theme = setTheme;
+
+/* --------------------------------------------------- capture destination --- */
+
+/** Host tells both windows when the folder or the auto-save flag changes. */
+window.b360_settings_changed = function(saveDir, autosave){
+  if (saveDir) $('capdirc').textContent = saveDir;
+  if (autosave !== null && autosave !== undefined) $('capauto').checked = !!autosave;
+};
+
+/**
+ * Host-driven link state. A detected loss puts the page back exactly as it
+ * looked before connecting; the host keeps reconnecting behind it and reports
+ * 'up' when it succeeds.
+ */
+window.b360_link_state = function(state, text){
+  if (state === 'lost'){
+    /* The indicator goes back to how it looks before a connection: grey dot,
+       "not connected". It must never sit green over a link that is gone. The
+       transcript carries the detail; the dot only says whether there is a link. */
+    setConnected(false);
+    writeLine('link lost — the board stopped answering. Reconnecting…', 'err');
+  } else if (state === 'retry'){
+    /* Deliberately silent: one line per attempt would bury the transcript, and
+       the status already reads "not connected". The waveform window shows the
+       attempt count, where it overwrites a single line instead of scrolling. */
+  } else if (state === 'stale'){
+    /* Nothing is sent to check, so this is not a claim that the board is gone --
+       only that the last reply is text seconds old and nothing has confirmed it
+       since. Input stays enabled: sending a command is how you find out. */
+    if (connected) setState('open, last reply ' + text + 's ago', 'stale');
+  } else if (state === 'fresh'){
+    /* The counter stops, without claiming a reconnect that never happened. */
+    if (connected) setState(text || 'connected', 'on');
+  } else if (state === 'up'){
+    setConnected(true, text);
+    writeLine('reconnected to ' + text + ' — send ID to confirm the unit.', 'note');
+  }
+};
+
+/** Python pushes progress and lifecycle events through here. */
+window.b360_event = function(kind, text){
+  if (kind === 'note')   writeLine(text, 'note');
+  else if (kind === 'err') writeLine(text, 'err');
+  else if (kind === 'out') write(clean(text));
+};
+
+/* --------------------------------------------------------------- csv reply --- */
+
+/**
+ * Pull waveform rows out of a reply, wherever they sit on the line.
+ *
+ * A row cannot simply be matched against a whole line, because the reply frame
+ * puts other tokens on the same line as the data. One token per command is
+ * concatenated with no separator, so
+ *
+ *     wc 10k; wg; ws; wr 0 4096
+ *
+ * comes back with its first row sharing a line with the earlier tokens:
+ *
+ *     OK; OK; DONE; 0.000000000,1.1507,0
+ *
+ * and a trailing command puts its token after the last row. Matching row-shaped
+ * text anywhere in the line handles both. Anchoring on whole lines instead loses
+ * sample 0 -- silently, because the viewer takes an unparseable first line for a
+ * header.
+ */
+function extractCsv(body){
+  var lines = body.split('\n'), out = [], i, m, re, found;
+  for (i = 0; i < lines.length; i++){
+    re = /(\d*\.?\d+(?:[eE][-+]?\d+)?)\s*,\s*(-?\d*\.?\d+)\s*,\s*([01])(?![\w.])/g;
+    found = 0;
+    while ((m = re.exec(lines[i])) !== null){
+      out.push(m[1] + ',' + m[2] + ',' + m[3]);
+      found++;
+    }
+    if (!found && out.length) break;      /* the data has ended */
+  }
+  return out;
+}
+
+function offerPlot(body, label, count){
+  var n = count || body.split('\n').filter(function(l){ return l.trim(); }).length;
+  var b = document.createElement('button');
+  b.className = 'plot';
+  b.textContent = 'Plot these ' + n + ' samples';
+  b.onclick = function(){
+    b.disabled = true;
+    b.textContent = 'sent to the waveform window';
+    api().plot_text({name: label, text: body}).catch(function(e){ fail('plot', e); });
+  };
+  var stick = atBottom();
+  term.appendChild(b);
+  term.appendChild(document.createTextNode('\n'));
+  if (stick) term.scrollTop = term.scrollHeight;
+}
+
+/**
+ * Save rows that came back from a hand-typed command, then offer to plot them.
+ *
+ * The host adds the header and the metadata comments, so a capture typed by hand
+ * ends up indistinguishable from one taken with the Capture button.
+ */
+function keepCapture(rows, cmd){
+  api().save_capture({rows: rows, command: cmd}).then(function(r){
+    if (!r || !r.ok){
+      writeLine('could not save the capture: ' + ((r && r.error) || 'unknown'), 'err');
+      offerPlot(rows.join('\n'), 'console ' + stamp(), rows.length);
+      return;
+    }
+    writeLine(r.saved ? 'saved ' + r.saved
+                      : 'captured ' + rows.length + ' samples (auto-save is off)', 'note');
+    offerPlot(r.csv, r.name, rows.length);
+  })['catch'](function(e){
+    fail('could not save the capture', e);
+    offerPlot(rows.join('\n'), 'console ' + stamp(), rows.length);
+  });
+}
+
+/* ---------------------------------------------------------------- commands --- */
+
+function stamp(){
+  var d = new Date();
+  return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2)
+       + ':' + ('0' + d.getSeconds()).slice(-2);
+}
+
+function submit(){
+  var line = $('entry').value;
+  if (!connected || busy) return;
+
+  /* An empty line is NOT a no-op. The firmware answers a line with no command on
+     it with its model name, so a bare Enter asks what is on the other end --
+     exactly what happens on Enter in PuTTY or TeraTerm. Blank lines are not
+     worth remembering, so they stay out of the history. */
+  if (line.trim() && cmdHistory[cmdHistory.length - 1] !== line) cmdHistory.push(line);
+  histIdx = cmdHistory.length;
+  pending = '';
+  $('entry').value = '';
+
+  writeLine('> ' + line, 'cmd');
+  setBusy(true);
+  api().send({line: line}).then(function(r){
+    setBusy(false);
+    if (!r.ok){ writeLine(r.error, 'err'); if (r.closed) setConnected(false); return; }
+    var body = clean(r.reply).replace(/^\n+/, '').replace(/\n+$/, '');
+    if (body) writeLine(body);
+
+    /* Typed waveform commands get the same treatment as the Capture button:
+       the rows are saved with metadata, not just offered for plotting. */
+    var rows = extractCsv(body);
+    if (rows.length >= 2) keepCapture(rows, line);
+  }).catch(function(e){ setBusy(false); fail('send failed', e); });
+}
+
+/* ------------------------------------------------------------------ wiring --- */
+
+$('entry').addEventListener('keydown', function(e){
+  if (e.key === 'Enter'){ e.preventDefault(); submit(); return; }
+  if (e.key === 'ArrowUp'){
+    if (!cmdHistory.length) return;
+    e.preventDefault();
+    if (histIdx === cmdHistory.length) pending = $('entry').value;
+    histIdx = Math.max(0, histIdx - 1);
+    $('entry').value = cmdHistory[histIdx];
+    return;
+  }
+  if (e.key === 'ArrowDown'){
+    if (histIdx >= cmdHistory.length) return;
+    e.preventDefault();
+    histIdx++;
+    $('entry').value = histIdx === cmdHistory.length ? pending : cmdHistory[histIdx];
+  }
+});
+
+$('theme').onchange = function(){
+  var mode = $('theme').value;
+  setTheme(mode);
+  /* The host stores it and pushes it to the waveform window, so the choice
+     applies even to a window that has not been opened yet. */
+  api().set_theme({theme: mode})['catch'](function(e){ fail('theme', e); });
+};
+
+$('capdirbtn').onclick = function(){
+  api().choose_save_dir({}).then(function(r){
+    if (r && r.ok) writeLine('captures now saved to ' + r.save_dir, 'note');
+    else if (r && r.error !== 'cancelled') fail('choose folder', r.error);
+  })['catch'](function(e){ fail('choose folder', e); });
+};
+
+/* Hidden with CSS rather than dropped, so switching the log back on brings the
+   whole session's lines back, not only the ones written from now on. */
+function applyActivityLog(on){
+  term.classList.toggle('quiet', !on);
+  $('actlog').checked = on;
+}
+
+$('actlog').onchange = function(){
+  applyActivityLog($('actlog').checked);
+  api().set_activity_log({on: $('actlog').checked})['catch'](function(){});
+};
+
+$('capauto').onchange = function(){
+  api().set_autosave({on: $('capauto').checked})['catch'](function(e){
+    fail('auto-save', e);
+  });
+};
+
+/* ------------------------------------------------------ right-click menu --- */
+
+/* Ctrl+C already works; this is the same thing for people who reach for the
+   mouse. WebView2 suppresses its own context menu unless pywebview is running in
+   debug (AreDefaultContextMenusEnabled), so the page supplies one. */
+var ctx = $('ctx');
+
+/** The current selection, but only if it lies inside the transcript. */
+function termSelection(){
+  var sel = window.getSelection();
+  if (!sel || sel.isCollapsed) return '';
+  var node = sel.anchorNode;
+  while (node && node !== term) node = node.parentNode;
+  return node === term ? sel.toString() : '';
+}
+
+function hideCtx(){ ctx.classList.remove('on'); }
+
+term.addEventListener('contextmenu', function(e){
+  e.preventDefault();
+  ctx.querySelector('[data-act="copy"]').disabled = (termSelection() === '');
+  ctx.classList.add('on');
+  /* measured after it is shown, so it can be kept on screen near an edge */
+  var x = Math.min(e.clientX, window.innerWidth  - ctx.offsetWidth  - 6);
+  var y = Math.min(e.clientY, window.innerHeight - ctx.offsetHeight - 6);
+  ctx.style.left = Math.max(0, x) + 'px';
+  ctx.style.top  = Math.max(0, y) + 'px';
+});
+
+/* Without this the press clears the selection before Copy can act on it. */
+ctx.addEventListener('mousedown', function(e){ e.preventDefault(); });
+
+ctx.addEventListener('click', function(e){
+  var act = e.target.getAttribute('data-act');
+  if (act === 'copy') copySelection();
+  else if (act === 'selall'){
+    var r = document.createRange();
+    r.selectNodeContents(term);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+  hideCtx();
+});
+
+function copySelection(){
+  if (termSelection() === '') return;
+  /* execCommand is deprecated, but it is what works from a file:// page: the
+     async clipboard API wants a secure context and WebView2 does not call this
+     one. Kept as the fallback for anything that does. */
+  var done = false;
+  try { done = document.execCommand('copy'); } catch (err) { done = false; }
+  if (done) return;
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(termSelection())['catch'](function(){
+      writeLine('could not copy to the clipboard', 'err');
+    });
+  } else {
+    writeLine('could not copy to the clipboard', 'err');
+  }
+}
+
+window.addEventListener('mousedown', function(e){
+  if (!ctx.contains(e.target)) hideCtx();
+});
+window.addEventListener('keydown', function(e){ if (e.key === 'Escape') hideCtx(); });
+window.addEventListener('blur', hideCtx);
+window.addEventListener('resize', hideCtx);
+term.addEventListener('scroll', hideCtx);
+
+$('send').onclick = submit;
+$('clear').onclick = function(){ term.textContent = ''; $('entry').focus(); };
+$('plotwin').onclick = function(){
+  api().show_plot({}).catch(function(e){ fail('waveform window', e); });
+};
+
+var eolDefaults = {tcp: 'crlf', serial: 'cr'};
+var eolPinned = false;     /* true once the user chooses one deliberately */
+
+$('kind').onchange = function(){
+  var serial = $('kind').value === 'serial';
+  $('tcpfields').hidden = serial;
+  $('serialfields').hidden = !serial;
+  /* Follow the transport's default until the user picks one deliberately. */
+  if (!eolPinned) $('eol').value = eolDefaults[serial ? 'serial' : 'tcp'];
+  if (serial) rescan();
+};
+
+$('eol').onchange = function(){
+  eolPinned = true;
+  api().set_eol({eol: $('eol').value}).then(function(){
+    writeLine('Enter now sends ' + $('eol').selectedOptions[0].textContent, 'note');
+  })['catch'](function(e){ fail('line ending', e); });
+};
+
+function rescan(){
+  api().list_serial({}).then(function(ports){
+    var sel = $('serialport');
+    sel.innerHTML = '';
+    if (!ports.length){
+      sel.innerHTML = '<option value="">no ports found</option>';
+      return;
+    }
+    ports.forEach(function(p){
+      var o = document.createElement('option');
+      o.value = p.device;
+      o.textContent = p.device + (p.rp2040 ? '  [HighlandTechnology]' : '') +
+                      (p.description ? '  — ' + p.description : '');
+      sel.appendChild(o);
+    });
+  }).catch(function(e){ fail('port scan', e); });
+}
+$('rescan').onclick = rescan;
+
+$('connect').onclick = function(){
+  if (busy) return;
+  if (connected){
+    api().disconnect({}).then(function(){
+      setConnected(false);
+      writeLine('disconnected', 'note');
+    }).catch(function(e){ fail('disconnect', e); });
+    return;
+  }
+  var opts = {kind: $('kind').value, host: $('host').value.trim(),
+              port: parseInt($('port').value, 10) || 5007,
+              serial_port: $('serialport').value, baud: 115200,
+              eol: $('eol').value};
+  if (opts.kind === 'tcp' && !opts.host){ writeLine('enter a host first', 'err'); return; }
+  setBusy(true);
+  setState('connecting…', 'busy');
+  api().connect(opts).then(function(r){
+    setBusy(false);
+    if (!r.ok){ writeLine(r.error, 'err'); setConnected(false); return; }
+    setConnected(true, r.name);
+    writeLine('connected to ' + r.name, 'note');
+  }).catch(function(e){ setBusy(false); setConnected(false); fail('connect', e); });
+};
+
+/* ------------------------------------------------------------------- boot --- */
+
+/* Controls that do nothing without the host process. */
+var HOST_ONLY = ['connect', 'kind', 'rescan', 'plotwin', 'eol',
+                 'capdirbtn', 'capauto'];
+
+var bridgeless = false;
+
+/** No host process: explain it once, and stop offering controls that cannot
+    work. The viewer page has no such limit, so point at it. */
+function browserMode(){
+  if (bridgeless || (window.pywebview && window.pywebview.api)) return;
+  bridgeless = true;
+  HOST_ONLY.forEach(function(id){ if ($(id)) $(id).disabled = true; });
+  setState('browser \u2014 no link', '');
+  writeLine('This page is open in a web browser.', 'err');
+  writeLine('A browser cannot open a TCP or serial connection, so the terminal '
+          + 'cannot reach the board from here. Connecting would stall, so the '
+          + 'controls are disabled.', 'note');
+  writeLine('For the terminal and one-click capture, run B360_console.exe.',
+            'note');
+  writeLine('To stay entirely in the browser: run wc/wg/ws/wr in whatever '
+          + 'terminal is approved on your machine, then open '
+          + 'b360_wave_viewer.html and paste or drop the CSV. That page needs '
+          + 'no connection and nothing installed.', 'note');
+}
+
+function boot(){
+  if (bridgeless){                 /* the host arrived after the grace period */
+    bridgeless = false;
+    term.textContent = '';
+    HOST_ONLY.forEach(function(id){ if ($(id)) $(id).disabled = false; });
+    setConnected(false);
+  }
+  api().get_defaults({}).then(function(d){
+    if (d.theme) setTheme(d.theme);
+    if (d.save_dir) $('capdirc').textContent = d.save_dir;
+    if (d.autosave !== undefined) $('capauto').checked = d.autosave !== false;
+    if (d.activity_log !== undefined) applyActivityLog(d.activity_log !== false);
+    if (d.host) $('host').value = d.host;
+    if (d.port) $('port').value = d.port;
+    if (d.eol_tcp) eolDefaults.tcp = d.eol_tcp;
+    if (d.eol_serial) eolDefaults.serial = d.eol_serial;
+    if (d.eol) { $('eol').value = d.eol; eolPinned = true; }
+    if (d.kind) { $('kind').value = d.kind; $('kind').onchange(); }
+    writeLine('B360 console ready. Connect to begin.', 'note');
+    writeLine('The board allows one connection at a time — close PuTTY or '
+            + 'TeraTerm first.', 'note');
+  }).catch(function(){
+    writeLine('B360 console ready. Connect to begin.', 'note');
+  });
+}
+
+/* The bridge may not be up yet -- or may never be, if this file was opened in
+   a browser, where pywebviewready never fires at all. Wait a beat, then say so
+   plainly rather than leaving a page that looks alive and is not. */
+if (window.pywebview && window.pywebview.api) boot();
+else {
+  window.addEventListener('pywebviewready', boot);
+  setTimeout(browserMode, 1500);
+}
+</script>
+</body>
+</html>

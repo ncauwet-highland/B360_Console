@@ -1,0 +1,25 @@
+# B360 console -- dependencies for running from source.
+#
+#     python -m venv .venv
+#     .venv\Scripts\activate          (Windows)   or   . .venv/bin/activate
+#     pip install -r requirements.txt
+#     python b360_console_app.py
+#
+# Needs Python 3.8 or newer. Versions are pinned to what the shipped
+# b360_console.exe was built and verified with; pip resolves the transitive
+# dependencies itself (on Windows pywebview pulls in pythonnet, bottle,
+# proxy_tools and cffi).
+#
+# Nothing here is needed to view a capture: b360_wave_viewer.html opens
+# in a browser on its own. Nothing here is needed for a capture over TCP
+# either -- b360_capture.py uses only the standard library for that.
+
+# The application window. Windows uses the WebView2 runtime, which ships with
+# Windows 11 and with Edge on Windows 10; no separate install in practice.
+# On Linux or macOS pywebview needs a platform backend as well -- see
+# https://pywebview.flowrl.com/guide/installation.html
+pywebview==6.2.1
+
+# USB serial transport, and the port scan behind the port dropdown. Only the
+# USB path uses it; TCP works without it.
+pyserial==3.5

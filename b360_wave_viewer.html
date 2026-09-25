@@ -1,0 +1,1876 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B360 Waveform Viewer</title>
+<!--
+  B360 waveform CSV viewer.
+
+  Self-contained: no Python, no install, no network, no third-party library.
+  Open this file in any browser and drop the CSV files produced by the WR
+  command onto it.  Expected columns are  time,voltage,comparator  as emitted
+  by the WR handler in src/core/custom_cmd.c.
+-->
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --ink:#1d2126; --dim:#666e78;
+  --line:#d6dae0; --grid:#e8ebef; --accent:#2f7fd0;
+  --field:#fff; --hover:#eef2f7; --warn:#b3541e; --bad:#c4384f;
+  --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  /* Canvas colours live here too, so the plot follows the theme without a
+     second palette to keep in step. draw() reads them via getComputedStyle. */
+  --c-paper:#ffffff; --c-grid:#e8ebef; --c-zero:#c3c9d1; --c-frame:#b9c1cb;
+  --c-label:#666e78; --c-faint:#9aa2ac; --c-title:#1d2126;
+  --c-guide:rgba(0,0,0,.10); --c-cross:rgba(0,0,0,.28);
+  --c-marker:#c4384f; --c-band:rgba(47,127,208,.12);
+  --c-gridm:#f1f4f7; --c-tick:#7c848e; --c-rule:#c9cfd6;
+}
+:root[data-theme="dark"]{
+  --bg:#14181d; --panel:#1c2128; --ink:#d6dbe1; --dim:#8b949e;
+  --line:#2d333b; --grid:#2d333b; --accent:#4a9eea;
+  --field:#0f1317; --hover:#262c34; --warn:#e0904a; --bad:#ff8b8b;
+  --c-paper:#1c2128; --c-grid:#2a3038; --c-zero:#3d444d; --c-frame:#3d444d;
+  --c-label:#8b949e; --c-faint:#6e7681; --c-title:#d6dbe1;
+  --c-guide:rgba(255,255,255,.13); --c-cross:rgba(255,255,255,.34);
+  --c-marker:#ff7b8f; --c-band:rgba(74,158,234,.16);
+  --c-gridm:#22282f; --c-tick:#828b95; --c-rule:#39414a;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;display:flex;flex-direction:column;background:var(--bg);color:var(--ink);
+     font:13px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;flex:none;
+       padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+h1{font-size:14px;font-weight:600;margin:0 8px 0 0;white-space:nowrap}
+.spacer{flex:1}
+button,select,input[type=number]{font:inherit;color:inherit;background:var(--field);
+       border:1px solid var(--line);border-radius:5px;padding:4px 9px}
+button{cursor:pointer}
+button:hover{background:var(--hover);border-color:var(--dim)}
+button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+button.pri:hover{background:#2569ad;border-color:#2569ad}
+label.ck{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;color:var(--dim)}
+input[type=number]{width:70px}
+input[type=text]{font:inherit;color:inherit;background:var(--field);
+                 border:1px solid var(--line);border-radius:5px;padding:4px 9px}
+#plottitle{width:240px;font-weight:600}
+#pastename{width:100%;margin-top:6px}
+.cpick{width:17px;height:17px;flex:none;padding:0;border:1px solid var(--line);
+       border-radius:4px;background:none;cursor:pointer}
+.cpick::-webkit-color-swatch-wrapper{padding:1px}
+.cpick::-webkit-color-swatch{border:0;border-radius:3px}
+.cpick::-moz-color-swatch{border:0;border-radius:3px}
+main{flex:1;display:flex;min-height:0}
+#plotwrap{position:relative;flex:1;min-width:0;min-height:260px}
+/* The statistics are worth copying, so the window runs with selection enabled.
+   The plot must not join in: dragging on it pans, and a drag that starts a
+   selection instead fights the pan. */
+canvas{display:block;width:100%;height:100%;cursor:crosshair;touch-action:none;
+       user-select:none}
+#readout{position:absolute;top:8px;right:8px;display:none;pointer-events:none;
+         background:var(--panel);opacity:.96;border:1px solid var(--line);border-radius:5px;
+         padding:6px 9px;font:12px/1.45 var(--mono);white-space:pre}
+aside{width:346px;flex:none;overflow:auto;background:var(--panel);
+      border-left:1px solid var(--line);padding:10px 12px}
+aside h2{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);
+         margin:14px 0 6px;font-weight:600}
+aside h2:first-child{margin-top:0}
+.leg{display:flex;align-items:center;gap:7px;padding:3px 0}
+.sw{width:12px;height:12px;border-radius:3px;flex:none}
+.leg .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.leg .x{border:0;background:none;color:var(--dim);cursor:pointer;padding:0 3px;
+        font-size:16px;line-height:1}
+.leg .x:hover{color:var(--bad);background:none}
+.st{border:1px solid var(--line);border-radius:6px;padding:7px 9px;margin-bottom:8px}
+.st .hd{display:flex;align-items:center;gap:7px;font-weight:600;margin-bottom:5px;
+        overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st table,#mk table{width:100%;border-collapse:collapse;font:12px/1.5 var(--mono)}
+td.k{color:var(--dim);white-space:nowrap;padding-right:8px}
+td.v{text-align:right;white-space:nowrap}
+.warn{color:var(--warn)}
+.hint{color:var(--dim);font-size:11.5px;margin:4px 0 0}
+textarea{width:100%;height:74px;font:12px var(--mono);border:1px solid var(--line);
+         border-radius:5px;padding:5px;resize:vertical;background:var(--field);color:inherit}
+.caprow{display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
+.caprow label{display:flex;align-items:center;gap:5px;color:var(--dim);font-size:12px}
+.caprow input[type=text],.caprow input[type=number]{width:74px}
+#capstat{margin:6px 0 4px;font:12px var(--mono);color:var(--dim);
+         min-height:16px;word-break:break-word}
+#capstat.busy{color:var(--warn)}
+#capstat.bad{color:var(--bad)}
+#capdir{font:11px var(--mono);color:var(--dim);word-break:break-all;margin:4px 0}
+.leg .sv{border:0;background:none;color:var(--dim);cursor:pointer;padding:0 3px;
+         font-size:13px;line-height:1}
+.leg .sv:hover{color:var(--accent);background:none}
+#msg{flex:none;padding:6px 12px;border-top:1px solid var(--line);background:var(--panel);
+     color:var(--dim);font:12px var(--mono);max-height:76px;overflow:auto;white-space:pre-wrap}
+#drop{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
+      background:rgba(47,127,208,.10);border:3px dashed var(--accent);
+      font-size:20px;color:#1b5e9e;pointer-events:none}
+#drop.on{display:flex}
+#help{flex:none;padding:10px 14px;background:var(--panel);
+      border-bottom:1px solid var(--line);font-size:12.5px;max-height:44vh;overflow:auto}
+#help ul{margin:4px 0 10px 18px;padding:0}
+#help li{margin:2px 0}
+#help code{background:var(--bg);padding:1px 4px;border-radius:3px;font-family:var(--mono)}
+#help p{margin:4px 0 8px}
+@media (max-width:840px){
+  main{flex-direction:column}
+  aside{width:auto;border-left:0;border-top:1px solid var(--line)}
+  #plotwrap{min-height:320px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>B360 Waveform Viewer</h1>
+  <input type="text" id="plottitle" placeholder="plot title"
+         title="drawn above the plot, and used as the file name by Save PNG">
+  <button class="pri" id="browse">Open CSV&hellip;</button>
+  <input type="file" id="file" multiple accept=".csv,.txt,text/csv,text/plain" hidden>
+  <button id="reset">Reset zoom</button>
+  <button id="png">Save PNG</button>
+  <label class="ck">comparator
+    <select id="compmode">
+      <option value="lane">lanes</option>
+      <option value="shade">shaded</option>
+      <option value="off">off</option>
+    </select>
+  </label>
+  <label class="ck" title="line traces up on their first cycle. t=0 is whenever WG fired, so two captures of the same signal start at different phases"><input type="checkbox" id="align"> phase align</label>
+  <label class="ck"><input type="checkbox" id="autoy" checked> auto Y</label>
+  <label class="ck">Y <input type="number" id="y0" step="0.1"> &hellip; <input type="number" id="y1" step="0.1"></label>
+  <span class="spacer"></span>
+  <button id="clrmk">Clear markers</button>
+  <button id="clrall">Remove all</button>
+  <button id="helpbtn">Help</button>
+</header>
+
+<section id="help" hidden>
+  <p><b>Input.</b> Drop one or more CSV files anywhere on this page, use
+  <b>Open CSV&hellip;</b>, or paste a raw <code>WR</code> reply into the box at the
+  bottom of the side panel &mdash; pasted data is named by the field under the box,
+  or <code>pasted-1</code>, <code>pasted-2</code>&hellip; if that is left blank.
+  Columns are <code>time,voltage,comparator</code>; a header row is optional and
+  the comparator column may be absent.</p>
+  <p><b>Titling and colour.</b> The <b>plot title</b> box in the toolbar is drawn
+  above the plot, and it also names the file that <b>Save PNG</b> writes. Every
+  trace has a colour swatch in the side panel &mdash; click it to pick any colour;
+  the waveform, its comparator trace and its statistics block all follow.</p>
+  <p><b>Save PNG.</b> The export is not a screenshot &mdash; the plot is redrawn at
+  a fixed size with a <b>statistics table underneath it</b>, so the image answers
+  on its own the questions a reader of a report will ask. The table carries one
+  column per visible trace (its colour swatch and name doubling as the legend),
+  every figure from the side panel, and the capture metadata from the CSV header:
+  <b>board</b>, <b>source</b>, <b>monitor mux</b> and <b>captured</b>. Under it go
+  the exact time and voltage window shown, any marker readings, the export time,
+  and the divider caveat below. Rows that have nothing to say are left out.</p>
+  <p>Running inside <code>B360_console.exe</code> this opens a save dialog,
+  starting in <code>Documents\B360 captures\saved_PNGs</code> and thereafter
+  wherever you last saved one. The file is named after the plot title, or
+  <code>B360_waveform_&lt;timestamp&gt;.png</code> if the title is blank. Opened as
+  a plain file in a browser there is no dialog to offer &mdash; the image goes to
+  the browser's download folder under the same name.</p>
+  <p><b>Mouse.</b></p>
+  <ul>
+    <li><b>wheel</b> &mdash; zoom the time axis about the pointer</li>
+    <li><b>shift+wheel</b> &mdash; zoom the voltage axis &nbsp;&middot;&nbsp; <b>ctrl+wheel</b> &mdash; zoom both</li>
+    <li><b>drag</b> &mdash; pan &nbsp;&middot;&nbsp; <b>shift+drag</b> &mdash; box zoom</li>
+    <li><b>click</b> &mdash; drop marker A, then B (&Delta;t and 1/&Delta;t appear in the side panel)</li>
+  <li><b>lanes</b> &mdash; all comparators share one lane and are told apart by
+      colour, so the voltage plot keeps its full height however many files are
+      open; traces at the same level are offset a couple of pixels so none is
+      hidden</li>
+    <li><b>double-click</b> &mdash; zoom to fit all visible traces</li>
+  </ul>
+  <p><b>Reading the numbers.</b> Time is seconds since the <code>WG</code> that
+  started the capture, so the first sample is always 0. Voltage is measured
+  <i>at the ADC pin</i> &mdash; the 1k/4.53k divider ahead of it is not undone, so a
+  monitor-mux swing of 4&nbsp;V arrives as about 3.277&nbsp;V. The comparator column is
+  the level latched with that same sample, for whichever channel <code>MO</code>
+  had selected. <b>Comparator frequency</b> in the statistics panel is derived
+  from rising edges only, which makes it directly comparable with what
+  <code>&lt;ch&gt;P</code> reports.</p>
+  <p><b>Phase align.</b> <code>t=0</code> is whenever <code>WG</code> fired, so two
+  captures of the same signal start at different points in the cycle and will not
+  overlay. Ticking <b>phase align</b> shifts each trace onto the first visible
+  trace's first cycle, which is what you want when checking that a waveform has not
+  changed. It only moves the <i>displayed</i> time axis &mdash; the statistics that
+  matter (sample rate, Vpp, comparator frequency) are unaffected, saved CSV still
+  carries the real time-since-GO, and the shift applied to each trace is listed in
+  its statistics block.</p>
+  <p>The first cycle is found as <b>first rising edge to second rising edge</b> of
+  the plotted waveform, which is a cycle whatever the shape &mdash; sine, square,
+  pulse train. The edge is timed at the 50% level of that first cycle's own swing
+  and interpolated between samples, so it does not depend on amplitude or DC level.
+  Nothing is averaged over the record: a mean taken across a capture belongs to no
+  particular cycle in it, and for a machine that changes speed while the capture
+  runs it is actively misleading. Every sample is used, sample 0 included.
+  The measured period appears as <b>first cycle</b> in the statistics; on
+  a machine that is changing speed it is the figure that differs from the
+  whole-record comparator frequency above it.</p>
+  <p><b>Grid and ticks.</b> Each labelled division is subdivided &mdash; into
+  fifths, or quarters where the step starts with a 2 &mdash; so every minor line
+  still lands on a round number. Tick marks are drawn on all four edges of the
+  plot box, long for a labelled division and short for a minor one, because the
+  grid alone washes out under a dense trace and is not what a printed plot gets
+  measured against.</p>
+  <p><b>Honest rendering.</b> When a capture is zoomed out far enough that one
+  screen pixel spans several samples, the trace is drawn as the min/max envelope
+  of each pixel column rather than a subsample, so narrow features are never
+  silently dropped. Zoom in past about 4 pixels per sample and individual
+  samples are marked.</p>
+</section>
+
+<main>
+  <div id="plotwrap"><canvas id="plot"></canvas><div id="readout"></div></div>
+  <aside>
+    <section id="cappanel" hidden>
+      <h2>Capture from board</h2>
+      <div class="caprow">
+        <label>rate <input type="text" id="caprate" value="10k"
+               title="1k-750k, SI suffixes accepted"></label>
+        <label>MO <input type="text" id="capchan" placeholder="keep"
+               title="monitor mux input; blank leaves it alone"></label>
+        <label>samples <input type="number" id="capcount" value="4096"
+               min="1" max="4096"></label>
+      </div>
+      <button class="pri" id="capgo">Capture</button>
+      <div id="capstat">connect in the console window first</div>
+      <label class="ck"><input type="checkbox" id="capauto" checked> auto-save each capture</label>
+      <div id="capdir"></div>
+      <button id="capdirbtn">Change folder&hellip;</button>
+    </section>
+    <h2>Traces</h2>
+    <div id="legend"></div>
+    <h2>Markers</h2>
+    <div id="mk"></div>
+    <h2>Statistics</h2>
+    <div id="stats"></div>
+    <h2>Paste WR output</h2>
+    <textarea id="paste" spellcheck="false" placeholder="0.000000000,2.8885,1
+0.000100000,2.8162,1
+..."></textarea>
+    <input type="text" id="pastename" placeholder="name for this data (optional)">
+    <button id="addpaste" style="margin-top:6px">Add pasted data</button>
+  </aside>
+</main>
+
+<div id="msg"></div>
+<div id="drop">Drop CSV files to plot</div>
+
+<!--PRELOAD-->
+<script>
+'use strict';
+
+/* ---------------------------------------------------------------- state --- */
+
+/** Trace colours, assigned in load order. Reused once more than 8 are open. */
+var PALETTE = ['#2f7fd0','#e2711d','#2aa05a','#c4384f',
+               '#8a5fd0','#0f9ba8','#9a7d0a','#d05ba0'];
+
+var traces  = [];            /* {name,color,visible,t,v,c,hasComp,skipped,s} */
+var colorSeq = 0, pasteSeq = 0;
+
+var view   = {t0:0, t1:1, v0:0, v1:3.3};
+var autoY  = true;
+var compMode = 'lane';
+var markers = [];            /* up to two times, in drop order */
+var hover = null;            /* {x,y} in CSS pixels */
+var drag  = null;            /* {mode,x,y,t0,t1,v0,v1,moved} */
+
+/* One shared comparator lane, not one per trace: the traces are colour-coded
+   to match their waveforms, so they can overlap without becoming ambiguous,
+   and the voltage plot keeps its height no matter how many files are open. */
+var LAY = {padL:66, padR:16, padT:14, padB:34, laneH:38, laneGap:6, gap:10,
+           laneSpread:10};
+var rectMain = {x:0, y:0, w:1, h:1};
+var gridBottom = 1;
+var W = 0, H = 0, dpr = 1;
+
+/* Height reserved below the plot for the statistics table. Zero on screen; set
+   only while rendering the export, so draw() lays the plot out above it. */
+var exportBottom = 0;
+
+var FAM = 'sans-serif';                  /* body font, resolved once at boot */
+
+/* Canvas colours, read from the CSS custom properties so the plot follows the
+   theme without a duplicate palette in JS. Refreshed by applyTheme(). */
+var TH = {};
+
+function readTheme(){
+  var cs = getComputedStyle(document.documentElement);
+  function v(name, fallback){
+    var x = cs.getPropertyValue(name);
+    return (x && x.trim()) || fallback;
+  }
+  TH = {paper:  v('--c-paper',  '#ffffff'),
+        grid:   v('--c-grid',   '#e8ebef'),
+        zero:   v('--c-zero',   '#c3c9d1'),
+        frame:  v('--c-frame',  '#b9c1cb'),
+        label:  v('--c-label',  '#666e78'),
+        faint:  v('--c-faint',  '#9aa2ac'),
+        title:  v('--c-title',  '#1d2126'),
+        guide:  v('--c-guide',  'rgba(0,0,0,.10)'),
+        cross:  v('--c-cross',  'rgba(0,0,0,.28)'),
+        marker: v('--c-marker', '#c4384f'),
+        band:   v('--c-band',   'rgba(47,127,208,.12)'),
+        gridm:  v('--c-gridm',  '#f1f4f7'),
+        tick:   v('--c-tick',   '#7c848e'),
+        rule:   v('--c-rule',   '#c9cfd6'),
+        accent: v('--accent',   '#2f7fd0')};
+}
+
+/** Called at boot and by the host when the terminal's theme toggle changes. */
+window.b360_set_theme = function(mode){
+  if (mode === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');
+  readTheme();
+  draw();
+};
+
+var cv  = document.getElementById('plot');
+var ctx = cv.getContext('2d');
+var $   = function(id){ return document.getElementById(id); };
+
+/* ----------------------------------------------------------- formatting --- */
+
+function timeUnit(span){
+  if (span >= 1)    return {u:'s',  k:1};
+  if (span >= 1e-3) return {u:'ms', k:1e3};
+  if (span >= 1e-6) return {u:'µs', k:1e6};
+  return {u:'ns', k:1e9};
+}
+
+/** Absolute time, for readouts rather than axis ticks. */
+function siTime(x){
+  var a = Math.abs(x);
+  if (a >= 1 || a === 0) return x.toFixed(6) + ' s';
+  if (a >= 1e-3) return (x*1e3).toFixed(4) + ' ms';
+  if (a >= 1e-6) return (x*1e6).toFixed(3) + ' µs';
+  return (x*1e9).toFixed(1) + ' ns';
+}
+
+function siHz(f){
+  if (!isFinite(f) || f <= 0) return '--';
+  if (f >= 1e6) return (f/1e6).toFixed(4) + ' MHz';
+  if (f >= 1e3) return (f/1e3).toFixed(4) + ' kHz';
+  return f.toFixed(4) + ' Hz';
+}
+
+/** 1/2/5 x 10^n step giving roughly `target` divisions across `span`. */
+function niceStep(span, target){
+  if (!(span > 0)) return 1;
+  var raw = span / Math.max(1, target);
+  var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  var n   = raw / mag;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * mag;
+}
+
+/**
+ * How many minor intervals a major tick step divides into.
+ *
+ * niceStep() only ever returns 1, 2 or 5 times a power of ten, so this is a
+ * lookup rather than a calculation: 1 and 5 subdivide into fifths, 2 into
+ * quarters. Every minor tick then lands on a round number, which is the whole
+ * point of reading a value off a grid.
+ */
+function minorDiv(step){
+  var mag = Math.pow(10, Math.floor(Math.log10(step) + 1e-9));
+  return Math.round(step / mag) === 2 ? 4 : 5;
+}
+
+/** Tick marks along the time axis, drawn inward from the top and bottom edges. */
+function tickMarksX(step, first, len){
+  var k, t, px, x0 = rectMain.x, x1 = rectMain.x + rectMain.w;
+  for (k = 0; k < 20000; k++){
+    t = first + k * step;
+    if (t > view.t1 + step * 1e-6) break;
+    px = Math.round(X(t)) + 0.5;
+    if (px < x0 - 0.5 || px > x1 + 0.5) continue;
+    ctx.moveTo(px, rectMain.y);  ctx.lineTo(px, rectMain.y + len);
+    ctx.moveTo(px, gridBottom);  ctx.lineTo(px, gridBottom - len);
+  }
+}
+
+/** Tick marks along the voltage axis. Only the main plot box has one. */
+function tickMarksY(step, first, len){
+  var k, v, py, y0 = rectMain.y, y1 = rectMain.y + rectMain.h;
+  for (k = 0; k < 20000; k++){
+    v = first + k * step;
+    if (v > view.v1 + step * 1e-6) break;
+    py = Math.round(Y(v)) + 0.5;
+    if (py < y0 - 0.5 || py > y1 + 0.5) continue;
+    ctx.moveTo(rectMain.x, py);  ctx.lineTo(rectMain.x + len, py);
+    ctx.moveTo(x1R(), py);       ctx.lineTo(x1R() - len, py);
+  }
+}
+
+function x1R(){ return rectMain.x + rectMain.w; }
+
+/** Enough decimals to distinguish neighbouring ticks, and no more. */
+function fmtStep(x, step){
+  var d = Math.max(0, Math.min(9, -Math.floor(Math.log10(step))));
+  var s = x.toFixed(d);
+  if (/^-0(\.0*)?$/.test(s)) s = s.slice(1);
+  return s;
+}
+
+function hexA(hex, a){
+  var n = parseInt(hex.slice(1), 16);
+  return 'rgba(' + ((n>>16)&255) + ',' + ((n>>8)&255) + ',' + (n&255) + ',' + a + ')';
+}
+
+function clip(s, n){ return s.length > n ? s.slice(0, n-1) + '…' : s; }
+
+function esc(s){
+  return String(s).replace(/[&<>"]/g, function(ch){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch];
+  });
+}
+
+var msgEl = $('msg');
+function say(text, warn){
+  msgEl.innerHTML = (warn ? '<span class="warn">' : '<span>') + esc(text) + '</span>';
+}
+function append(text, warn){
+  msgEl.innerHTML += (warn ? '\n<span class="warn">' : '\n<span>') + esc(text) + '</span>';
+  msgEl.scrollTop = msgEl.scrollHeight;
+}
+
+/* --------------------------------------------------------------- search --- */
+
+/** First index with arr[i] >= x. Assumes ascending arr. */
+function lowerBound(arr, x){
+  var lo = 0, hi = arr.length, m;
+  while (lo < hi){ m = (lo + hi) >> 1; if (arr[m] < x) lo = m + 1; else hi = m; }
+  return lo;
+}
+
+function nearest(arr, x){
+  var i = lowerBound(arr, x);
+  if (i <= 0) return 0;
+  if (i >= arr.length) return arr.length - 1;
+  return (x - arr[i-1] <= arr[i] - x) ? i - 1 : i;
+}
+
+/* --------------------------------------------------------------- parsing --- */
+
+/**
+ * The "# key: value" lines b360_capture.py writes ahead of the data.
+ *
+ * These are what make a plot citable -- which board, which monitor-mux input,
+ * when it was taken -- so they are carried into the exported PNG rather than
+ * being dropped on the floor with the rest of the comments. Pasted data has
+ * none, and that is not an error.
+ */
+function parseMeta(text){
+  var lines = String(text).split(/\r\n|\r|\n/), meta = {}, i, s, j;
+  for (i = 0; i < lines.length && i < 40; i++){
+    s = lines[i].trim();
+    if (!s) continue;
+    if (s.charAt(0) !== '#') break;        /* the data has started */
+    s = s.slice(1).trim();
+    j = s.indexOf(':');
+    if (j > 0) meta[s.slice(0, j).trim().toLowerCase()] = s.slice(j + 1).trim();
+  }
+  return meta;
+}
+
+/**
+ * Tolerant reader for WR output. Accepts CRLF or LF, an optional header row,
+ * the trailing "; " that send_value_response() appends, a missing comparator
+ * column, and blank lines. Rows that cannot be read are counted, not fatal.
+ */
+function parseCsv(text, name){
+  if (text && text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  var lines = String(text).split(/\r\n|\r|\n/);
+  var t = [], v = [], c = [];
+  var skipped = 0, hasComp = false, seen = 0, i, s, f, tv, vv, s3, n3, cval;
+
+  for (i = 0; i < lines.length; i++){
+    s = lines[i].trim();
+    if (!s) continue;
+    if (s.charAt(0) === '#') continue;       /* capture metadata */
+    s = s.replace(/[;\s]+$/, '');            /* reply framing */
+    if (!s) continue;
+    f  = s.split(',');
+    tv = f.length > 1 ? Number(f[0].trim()) : NaN;
+    vv = f.length > 1 ? Number(f[1].trim()) : NaN;
+    if (!isFinite(tv) || !isFinite(vv)){
+      if (seen === 0){ seen++; continue; }   /* header row */
+      skipped++; seen++; continue;
+    }
+    seen++;
+    cval = 0;
+    if (f.length > 2){
+      s3 = f[2].trim();
+      if (s3 !== ''){
+        n3 = Number(s3);
+        if (isFinite(n3)){ cval = n3 ? 1 : 0; hasComp = true; }
+      }
+    }
+    t.push(tv); v.push(vv); c.push(cval);
+  }
+
+  if (!t.length) return {err:'no numeric rows found'};
+  /* keep the source text: saving a trace should hand back exactly what came in,
+     metadata comments and all, not a re-rendering of the parsed numbers */
+  /* `t` is the displayed time column and phase alignment rewrites it, so `tsrc`
+     keeps the real time-since-GO to rebuild from. Saving uses `raw`, so neither
+     is affected by what the display does. */
+  return {name:name, raw:String(text), meta:parseMeta(text),
+          color:PALETTE[colorSeq++ % PALETTE.length], visible:true,
+          t:Float64Array.from(t), tsrc:Float64Array.from(t),
+          v:Float64Array.from(v), c:Uint8Array.from(c),
+          hasComp:hasComp, skipped:skipped, shift:0};
+}
+
+/* ------------------------------------------------------------ statistics --- */
+
+function computeStats(tr){
+  var t = tr.t, v = tr.v, c = tr.c, n = t.length;
+  var vmin = Infinity, vmax = -Infinity, sum = 0, sq = 0, mono = true, i, x;
+
+  for (i = 0; i < n; i++){
+    x = v[i];
+    if (x < vmin) vmin = x;
+    if (x > vmax) vmax = x;
+    sum += x; sq += x*x;
+    if (i && t[i] < t[i-1]) mono = false;
+  }
+  var mean = sum / n;
+  var rms  = Math.sqrt(sq / n);
+  var ac   = Math.sqrt(Math.max(0, sq/n - mean*mean));
+
+  /* median sample interval: robust against a dropped row or a pasted gap */
+  var dts = [];
+  for (i = 1; i < n; i++) dts.push(t[i] - t[i-1]);
+  dts.sort(function(a,b){ return a - b; });
+  var dt = dts.length ? dts[dts.length >> 1] : 0;
+
+  /* comparator edges. Frequency uses rising edges only, so it lines up with
+     what the tachometer's own period registers count. */
+  var trans = 0, firstRise = 0, lastRise = 0, nRise = 0;
+  for (i = 1; i < n; i++){
+    if (c[i] !== c[i-1]){
+      trans++;
+      if (c[i]){
+        if (!nRise) firstRise = t[i];
+        lastRise = t[i];
+        nRise++;
+      }
+    }
+  }
+  var freq = (nRise >= 2 && lastRise > firstRise)
+           ? (nRise - 1) / (lastRise - firstRise) : 0;
+
+  tr.s = {n:n, t0:t[0], t1:t[n-1], span:t[n-1] - t[0], dt:dt, fs:(dt > 0 ? 1/dt : 0),
+          vmin:vmin, vmax:vmax, vpp:vmax - vmin, mean:mean, rms:rms, ac:ac,
+          trans:trans, nRise:nRise, freq:freq, mono:mono};
+}
+
+/* ------------------------------------------------------- phase alignment --- */
+
+var phaseAlign = false;
+
+/**
+ * The trace's first cycle: its first rising edge to its second, measured on the
+ * input waveform. Returns {t, period}, or null if no cycle is there to find.
+ * `period` is 0 when only one edge was captured.
+ *
+ * Every input to this instrument is periodic -- sine, square, pulse train -- so
+ * one rising edge to the next is a cycle whatever the shape, and the first one
+ * in the record is the first cycle. That is all phase align needs: two reads of
+ * the same signal that happened to start at different points in the cycle are
+ * put on the same footing by lining up an edge.
+ *
+ * What it does not do is take any statistic over the whole record. A mean or a
+ * peak-to-peak across the capture belongs to no particular cycle in it, and
+ * these records come from rotating machinery whose speed can change while the
+ * capture runs. Levels here come from the first cycle and nothing else.
+ *
+ * The comparator column is not used. It is a separate measurement of a fixed
+ * threshold, not a fiducial for the waveform being plotted.
+ *
+ * Every sample is used, sample 0 included. An earlier version skipped it because
+ * the acquisition writes a bad first conversion, but hiding a known-bad sample
+ * only makes a capture with one look trustworthy. If sample 0 is wrong the
+ * alignment should show it.
+ */
+function alignFeature(tr){
+  var v = tr.v, t = tr.tsrc, n = v.length, i;
+  var lo, hi, band, low, high, s, state = 0, a = -1, b = -1;
+
+  if (n < 5) return null;
+
+  /* Pass 1 -- find where the first cycle is.
+     The trigger levels are a quarter and three quarters of the record's own
+     swing. Extremes, not an average: they say how big the signal is, which is
+     all a trigger needs, and unlike a mean they do not drift when the machine
+     changes speed. The wide hysteresis is what makes this indifferent to shape
+     -- a sine, a square and a pulse train all cross both levels once per cycle
+     -- and it ignores a quiet stretch before the signal arrives, because noise
+     sitting near the middle never reaches either level.
+     The edges this finds are only roughly placed; pass 2 times them. */
+  lo = hi = v[0];
+  for (i = 1; i < n; i++){
+    if (v[i] < lo) lo = v[i];
+    if (v[i] > hi) hi = v[i];
+  }
+  band = hi - lo;
+  if (band === 0) return null;              //< flat: DC, nothing to align on
+  low  = lo + band * 0.25;
+  high = lo + band * 0.75;
+
+  for (i = 1; i < n; i++){
+    s = (v[i] >= high) ? 1 : (v[i] <= low ? -1 : 0);
+    if (s === 0 || s === state) continue;
+    if (state === -1 && s === 1){
+      if (a < 0) a = i;
+      else { b = i; break; }
+    }
+    state = s;
+  }
+  if (a < 0) return null;                   //< nothing that rises
+  if (b < 0) b = n - 1;                     //< only one edge in the record
+
+  /* Pass 2 -- time the edges properly, against the first cycle's own swing. The
+     50% level is where an edge is conventionally timed, it is the same point on
+     the waveform whatever the amplitude, and interpolating across the two
+     samples either side takes it off the sample grid. */
+  var clo = Infinity, chi = -Infinity, mid, rearm, den, f;
+  for (i = a; i <= b; i++){
+    if (v[i] < clo) clo = v[i];
+    if (v[i] > chi) chi = v[i];
+  }
+  if (!(chi > clo)) return null;
+  mid   = (clo + chi) / 2;
+  rearm = clo + (chi - clo) * 0.25;
+
+  var edges = [], armed = false;
+  for (i = 1; i < n && edges.length < 2; i++){
+    if (v[i] <= rearm) armed = true;        //< one edge per trip below the low
+    if (armed && v[i] >= mid && v[i-1] < mid){
+      den = v[i] - v[i-1];
+      f = den ? (mid - v[i-1]) / den : 0;
+      edges.push(t[i-1] + f * (t[i] - t[i-1]));
+      armed = false;
+    }
+  }
+  if (!edges.length) return null;
+  return {t: edges[0], period: edges.length > 1 ? edges[1] - edges[0] : 0};
+}
+
+/**
+ * Rebuild every trace's displayed time column.
+ *
+ * Traces are shifted onto the FIRST VISIBLE trace's feature rather than onto
+ * zero, so the reference trace keeps its true time-since-GO and the others move
+ * to meet it.
+ */
+function applyAlign(){
+  var i, j, tr, ref = null, vs = visibleTraces();
+
+  /* The first cycle is measured whether or not the traces are being shifted:
+     its period is reported in the statistics, and on a machine that changes
+     speed it is the number that differs from the whole-record frequency. */
+  for (i = 0; i < traces.length; i++){
+    traces[i].cycle = alignFeature(traces[i]);
+    traces[i].feature = (phaseAlign && traces[i].cycle) ? traces[i].cycle.t : null;
+  }
+
+  if (phaseAlign)
+    for (i = 0; i < vs.length; i++)
+      if (vs[i].feature !== null){ ref = vs[i].feature; break; }
+
+  for (i = 0; i < traces.length; i++){
+    tr = traces[i];
+    tr.shift = (ref !== null && tr.feature !== null) ? (ref - tr.feature) : 0;
+    if (tr.shift === 0){
+      if (tr.t !== tr.tsrc) for (j = 0; j < tr.t.length; j++) tr.t[j] = tr.tsrc[j];
+    } else {
+      for (j = 0; j < tr.t.length; j++) tr.t[j] = tr.tsrc[j] + tr.shift;
+    }
+    computeStats(tr);
+  }
+}
+
+/** Trace set changed: realign, redraw the panels, refit. */
+function tracesChanged(refit){
+  applyAlign();
+  renderAll();
+  if (refit) fitAll(); else draw();
+}
+
+/* ------------------------------------------------------------------ view --- */
+
+function visibleTraces(){
+  return traces.filter(function(tr){ return tr.visible; });
+}
+
+function X(t){ return rectMain.x + (t - view.t0) * rectMain.w / (view.t1 - view.t0); }
+function Y(v){ return rectMain.y + rectMain.h
+                    - (v - view.v0) * rectMain.h / (view.v1 - view.v0); }
+function invX(px){ return view.t0 + (px - rectMain.x) * (view.t1 - view.t0) / rectMain.w; }
+function invY(py){ return view.v0 + (rectMain.y + rectMain.h - py)
+                        * (view.v1 - view.v0) / rectMain.h; }
+
+var MIN_TSPAN = 1e-12, MIN_VSPAN = 1e-6;
+
+function clampView(){
+  if (!(view.t1 - view.t0 > MIN_TSPAN)){
+    var tc = (view.t0 + view.t1) / 2;
+    view.t0 = tc - MIN_TSPAN/2; view.t1 = tc + MIN_TSPAN/2;
+  }
+  if (!(view.v1 - view.v0 > MIN_VSPAN)){
+    var vc = (view.v0 + view.v1) / 2;
+    view.v0 = vc - MIN_VSPAN/2; view.v1 = vc + MIN_VSPAN/2;
+  }
+}
+
+function fitX(){
+  var vs = visibleTraces(), a = Infinity, b = -Infinity, i;
+  if (!vs.length){ view.t0 = 0; view.t1 = 1; return; }
+  for (i = 0; i < vs.length; i++){
+    if (vs[i].s.t0 < a) a = vs[i].s.t0;
+    if (vs[i].s.t1 > b) b = vs[i].s.t1;
+  }
+  if (!(b > a)) b = a + 1e-6;
+  view.t0 = a; view.t1 = b;
+}
+
+/** Fit Y to the samples inside the current time window. */
+function fitY(){
+  var vs = visibleTraces(), a = Infinity, b = -Infinity, i, j, i0, i1, tr, x;
+  for (i = 0; i < vs.length; i++){
+    tr = vs[i];
+    i0 = Math.max(0, lowerBound(tr.t, view.t0) - 1);
+    i1 = Math.min(tr.t.length - 1, lowerBound(tr.t, view.t1));
+    for (j = i0; j <= i1; j++){
+      x = tr.v[j];
+      if (x < a) a = x;
+      if (x > b) b = x;
+    }
+  }
+  if (!isFinite(a) || !isFinite(b)){ a = 0; b = 3.3; }
+  var pad = (b - a) * 0.05 || 0.05;
+  view.v0 = a - pad; view.v1 = b + pad;
+}
+
+function syncYInputs(){
+  $('y0').value = view.v0.toFixed(4);
+  $('y1').value = view.v1.toFixed(4);
+}
+
+function fitAll(){ fitX(); fitY(); clampView(); syncYInputs(); draw(); }
+
+/* --------------------------------------------------------------- drawing --- */
+
+/** Window of sample indices covering the view, one sample of overhang each side. */
+function span(tr){
+  return {i0: Math.max(0, lowerBound(tr.t, view.t0) - 1),
+          i1: Math.min(tr.t.length - 1, lowerBound(tr.t, view.t1))};
+}
+
+function drawTrace(tr){
+  var w = span(tr), i0 = w.i0, i1 = w.i1, i, x, y;
+  if (i1 <= i0){
+    if (i1 === i0){
+      ctx.fillStyle = tr.color;
+      ctx.fillRect(X(tr.t[i0]) - 1.5, Y(tr.v[i0]) - 1.5, 3, 3);
+    }
+    return;
+  }
+
+  var pxPerSample = rectMain.w / (i1 - i0);
+  ctx.strokeStyle = tr.color;
+  ctx.lineWidth = 1.4;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+
+  if (pxPerSample >= 1){
+    for (i = i0; i <= i1; i++){
+      x = X(tr.t[i]); y = Y(tr.v[i]);
+      if (i === i0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+  } else {
+    /* One vertical min/max span per pixel column, chained so the envelope
+       stays connected. Nothing is subsampled away. */
+    var col = 0, mn = 0, mx = 0, started = false, cx;
+    for (i = i0; i <= i1; i++){
+      cx = Math.round(X(tr.t[i]));
+      if (!started){
+        ctx.moveTo(cx, Y(tr.v[i]));
+        col = cx; mn = mx = tr.v[i]; started = true;
+      } else if (cx !== col){
+        ctx.lineTo(col, Y(mn));
+        ctx.lineTo(col, Y(mx));
+        col = cx; mn = mx = tr.v[i];
+      } else {
+        if (tr.v[i] < mn) mn = tr.v[i];
+        if (tr.v[i] > mx) mx = tr.v[i];
+      }
+    }
+    if (started){ ctx.lineTo(col, Y(mn)); ctx.lineTo(col, Y(mx)); }
+  }
+  ctx.stroke();
+
+  /* Individual samples, once there is room to see them. */
+  if (pxPerSample >= 4){
+    ctx.fillStyle = tr.color;
+    for (i = i0; i <= i1; i++) ctx.fillRect(X(tr.t[i]) - 1.5, Y(tr.v[i]) - 1.5, 3, 3);
+  }
+}
+
+/** Comparator-high spans as a translucent band behind the traces. */
+function drawShade(tr){
+  var w = span(tr), i0 = w.i0, i1 = w.i1, i, run = -1;
+  ctx.fillStyle = hexA(tr.color, 0.13);
+  for (i = i0; i <= i1; i++){
+    if (tr.c[i] && run < 0) run = i;
+    else if (!tr.c[i] && run >= 0){
+      ctx.fillRect(X(tr.t[run]), rectMain.y, Math.max(1, X(tr.t[i]) - X(tr.t[run])), rectMain.h);
+      run = -1;
+    }
+  }
+  if (run >= 0)
+    ctx.fillRect(X(tr.t[run]), rectMain.y,
+                 Math.max(1, X(tr.t[i1]) - X(tr.t[run])), rectMain.h);
+}
+
+/**
+ * One stepped 0/1 comparator trace, in its own colour, inside the shared lane.
+ * `off` nudges it down by a few pixels so that traces sitting at the same
+ * level stay individually visible instead of hiding one another exactly.
+ */
+function drawLane(tr, top, off){
+  var w = span(tr), i0 = w.i0, i1 = w.i1, i;
+  var yHi = top + 6 + off, yLo = top + 26 + off;
+  var lvl = function(b){ return b ? yHi : yLo; };
+  if (i1 < i0) return;
+  ctx.strokeStyle = tr.color;
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  var prev = tr.c[i0];
+  ctx.moveTo(X(tr.t[i0]), lvl(prev));
+  for (i = i0 + 1; i <= i1; i++){
+    if (tr.c[i] !== prev){                   /* only the transitions matter */
+      var x = X(tr.t[i]);
+      ctx.lineTo(x, lvl(prev));
+      ctx.lineTo(x, lvl(tr.c[i]));
+      prev = tr.c[i];
+    }
+  }
+  ctx.lineTo(X(tr.t[i1]), lvl(prev));
+  ctx.stroke();
+}
+
+function draw(){
+  var vs = visibleTraces(), i, t, v, px, py, k;
+
+  if (autoY && vs.length){ fitY(); syncYInputs(); }
+  clampView();
+
+  var lanes = (compMode === 'lane')
+            ? vs.filter(function(tr){ return tr.hasComp; }) : [];
+  var compH  = lanes.length ? LAY.laneH + 2 * LAY.laneGap : 0;
+  var title  = $('plottitle').value.trim();
+  var titleH = title ? 28 : 0;
+  var yTop   = LAY.padT + titleH;
+  var hMain  = Math.max(60, H - yTop - LAY.padB - compH - (compH ? LAY.gap : 0)
+                             - exportBottom);
+
+  rectMain = {x:LAY.padL, y:yTop, w:Math.max(20, W - LAY.padL - LAY.padR), h:hMain};
+  var compY = rectMain.y + hMain + LAY.gap;
+  gridBottom = compH ? compY + compH : rectMain.y + hMain;
+
+  ctx.fillStyle = TH.paper;
+  ctx.fillRect(0, 0, W, H);
+
+  if (title){
+    ctx.fillStyle = TH.title;
+    ctx.font = '600 15px ' + FAM;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(title, rectMain.x + rectMain.w / 2, LAY.padT + titleH / 2);
+  }
+
+  var tspan  = view.t1 - view.t0;
+  var tu     = timeUnit(tspan);
+  var xstep  = niceStep(tspan, Math.max(2, Math.floor(rectMain.w / 92)));
+  var ystep  = niceStep(view.v1 - view.v0, Math.max(2, Math.floor(hMain / 46)));
+  var xFirst = Math.ceil(view.t0 / xstep) * xstep;
+  var yFirst = Math.ceil(view.v0 / ystep) * ystep;
+
+  /* Minor divisions of each labelled step. Without them a reader can only
+     interpolate between labels by eye, which is not good enough for a plot that
+     ends up in a document. */
+  var xsub  = xstep / minorDiv(xstep);
+  var ysub  = ystep / minorDiv(ystep);
+  var xFsub = Math.ceil(view.t0 / xsub) * xsub;
+  var yFsub = Math.ceil(view.v0 / ysub) * ysub;
+
+  /* minor grid */
+  ctx.strokeStyle = TH.gridm;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (k = 0; k < 20000; k++){
+    t = xFsub + k * xsub;
+    if (t > view.t1 + xsub * 1e-6) break;
+    px = Math.round(X(t)) + 0.5;
+    ctx.moveTo(px, rectMain.y); ctx.lineTo(px, gridBottom);
+  }
+  for (k = 0; k < 20000; k++){
+    v = yFsub + k * ysub;
+    if (v > view.v1 + ysub * 1e-6) break;
+    py = Math.round(Y(v)) + 0.5;
+    ctx.moveTo(rectMain.x, py); ctx.lineTo(rectMain.x + rectMain.w, py);
+  }
+  ctx.stroke();
+
+  /* major grid */
+  ctx.strokeStyle = TH.grid;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (k = 0; k < 4000; k++){
+    t = xFirst + k * xstep;
+    if (t > view.t1 + xstep * 1e-6) break;
+    px = Math.round(X(t)) + 0.5;
+    ctx.moveTo(px, rectMain.y); ctx.lineTo(px, gridBottom);
+  }
+  for (k = 0; k < 4000; k++){
+    v = yFirst + k * ystep;
+    if (v > view.v1 + ystep * 1e-6) break;
+    py = Math.round(Y(v)) + 0.5;
+    ctx.moveTo(rectMain.x, py); ctx.lineTo(rectMain.x + rectMain.w, py);
+  }
+  ctx.stroke();
+
+  /* zero volts, if it is on screen */
+  if (view.v0 < 0 && view.v1 > 0){
+    ctx.strokeStyle = TH.zero;
+    ctx.beginPath();
+    py = Math.round(Y(0)) + 0.5;
+    ctx.moveTo(rectMain.x, py); ctx.lineTo(rectMain.x + rectMain.w, py);
+    ctx.stroke();
+  }
+
+  /* traces, clipped to the plot box */
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(rectMain.x, rectMain.y, rectMain.w, rectMain.h);
+  ctx.clip();
+  if (compMode === 'shade')
+    for (i = 0; i < vs.length; i++) if (vs[i].hasComp) drawShade(vs[i]);
+  for (i = 0; i < vs.length; i++) drawTrace(vs[i]);
+  ctx.restore();
+
+  /* comparator: all traces share one lane, told apart by colour */
+  if (lanes.length){
+    var laneTop = compY + LAY.laneGap;
+    var spread  = lanes.length > 1
+                ? Math.min(2.5, LAY.laneSpread / (lanes.length - 1)) : 0;
+
+    ctx.strokeStyle = TH.guide;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(rectMain.x, Math.round(laneTop + 6) + 0.5);
+    ctx.lineTo(rectMain.x + rectMain.w, Math.round(laneTop + 6) + 0.5);
+    ctx.moveTo(rectMain.x, Math.round(laneTop + 26) + 0.5);
+    ctx.lineTo(rectMain.x + rectMain.w, Math.round(laneTop + 26) + 0.5);
+    ctx.stroke();
+
+    ctx.fillStyle = TH.faint;
+    ctx.font = '10px ' + FAM;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('1', rectMain.x - 7, laneTop + 6);
+    ctx.fillText('0', rectMain.x - 7, laneTop + 26);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rectMain.x, compY, rectMain.w, Math.max(0, compH));
+    ctx.clip();
+    for (i = 0; i < lanes.length; i++) drawLane(lanes[i], laneTop, i * spread);
+    ctx.restore();
+  }
+
+  /* frame */
+  ctx.strokeStyle = TH.frame;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(Math.round(rectMain.x) + 0.5, Math.round(rectMain.y) + 0.5,
+                 Math.round(rectMain.w), Math.round(rectMain.h));
+
+  /* Tick marks on the frame itself, minor then major. The grid alone washes out
+     against a dense trace; a tick on the edge stays readable and is what a
+     printed plot is measured against. */
+  ctx.strokeStyle = TH.tick;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  tickMarksX(xsub, xFsub, 4);
+  tickMarksY(ysub, yFsub, 4);
+  ctx.stroke();
+  ctx.beginPath();
+  tickMarksX(xstep, xFirst, 8);
+  tickMarksY(ystep, yFirst, 8);
+  ctx.stroke();
+
+  /* tick labels */
+  ctx.fillStyle = TH.label;
+  ctx.font = '11px ' + FAM;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (k = 0; k < 4000; k++){
+    t = xFirst + k * xstep;
+    if (t > view.t1 + xstep * 1e-6) break;
+    ctx.fillText(fmtStep(t * tu.k, xstep * tu.k), X(t), gridBottom + 5);
+  }
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (k = 0; k < 4000; k++){
+    v = yFirst + k * ystep;
+    if (v > view.v1 + ystep * 1e-6) break;
+    ctx.fillText(fmtStep(v, ystep), rectMain.x - 7, Y(v));
+  }
+
+  /* axis titles */
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillText('t (' + tu.u + ')', rectMain.x + rectMain.w, gridBottom + 18);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText('V', 6, rectMain.y);
+
+  if (!vs.length){
+    ctx.fillStyle = TH.faint;
+    ctx.font = '14px ' + FAM;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Drop WR capture CSVs here',
+                 rectMain.x + rectMain.w/2, rectMain.y + rectMain.h/2);
+    return;
+  }
+
+  /* markers */
+  ctx.setLineDash([5,4]);
+  for (i = 0; i < markers.length; i++){
+    px = X(markers[i]);
+    if (px < rectMain.x - 1 || px > rectMain.x + rectMain.w + 1) continue;
+    ctx.strokeStyle = TH.marker;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(Math.round(px) + 0.5, rectMain.y);
+    ctx.lineTo(Math.round(px) + 0.5, gridBottom);
+    ctx.stroke();
+    ctx.fillStyle = TH.marker;
+    ctx.font = 'bold 11px ' + FAM;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(i ? 'B' : 'A', px + 3, rectMain.y + 2);
+  }
+  ctx.setLineDash([]);
+
+  /* box zoom rubber band */
+  if (drag && drag.mode === 'box' && hover){
+    var bx = Math.min(drag.x, hover.x), bw = Math.abs(hover.x - drag.x);
+    ctx.fillStyle = TH.band;
+    ctx.fillRect(bx, rectMain.y, bw, rectMain.h);
+    ctx.strokeStyle = TH.accent;
+    ctx.strokeRect(Math.round(bx) + 0.5, Math.round(rectMain.y) + 0.5,
+                   Math.round(bw), Math.round(rectMain.h));
+  }
+
+  /* crosshair */
+  if (hover && !drag && hover.x >= rectMain.x && hover.x <= rectMain.x + rectMain.w){
+    ctx.strokeStyle = TH.cross;
+    ctx.setLineDash([3,3]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(Math.round(hover.x) + 0.5, rectMain.y);
+    ctx.lineTo(Math.round(hover.x) + 0.5, gridBottom);
+    if (hover.y >= rectMain.y && hover.y <= rectMain.y + rectMain.h){
+      ctx.moveTo(rectMain.x, Math.round(hover.y) + 0.5);
+      ctx.lineTo(rectMain.x + rectMain.w, Math.round(hover.y) + 0.5);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+/* ---------------------------------------------------------------- panels --- */
+
+function row(k, v, cls){
+  return '<tr><td class="k">' + k + '</td><td class="v' + (cls ? ' ' + cls : '') +
+         '">' + v + '</td></tr>';
+}
+
+function renderLegend(){
+  var el = $('legend'), h = '', i, tr;
+  if (!traces.length){
+    el.innerHTML = '<p class="hint">No data loaded. Drop CSV files anywhere on ' +
+                   'this page.</p>';
+    return;
+  }
+  for (i = 0; i < traces.length; i++){
+    tr = traces[i];
+    h += '<div class="leg">' +
+           '<input type="checkbox" data-vis="' + i + '"' + (tr.visible ? ' checked' : '') + '>' +
+           '<input type="color" class="cpick" data-col="' + i + '" value="' + tr.color +
+             '" title="trace colour">' +
+           '<span class="nm" title="' + esc(tr.name) + '">' + esc(tr.name) + '</span>' +
+           '<button class="sv" data-save="' + i + '" title="save this trace as CSV">&#8681;</button>' +
+           '<button class="x" data-del="' + i + '" title="remove">&times;</button>' +
+         '</div>';
+  }
+  el.innerHTML = h;
+}
+
+function renderStats(){
+  var el = $('stats'), h = '', i, tr, s;
+  if (!traces.length){ el.innerHTML = '<p class="hint">&mdash;</p>'; return; }
+  for (i = 0; i < traces.length; i++){
+    tr = traces[i]; s = tr.s;
+    h += '<div class="st">' +
+           '<div class="hd"><span class="sw" style="background:' + tr.color + '"></span>' +
+           esc(clip(tr.name, 30)) + '</div><table>' +
+           row('points',      s.n) +
+           row('span',        siTime(s.span)) +
+           row('sample rate', siHz(s.fs)) +
+           row('interval',    siTime(s.dt)) +
+           row('V min',       s.vmin.toFixed(4) + ' V') +
+           row('V max',       s.vmax.toFixed(4) + ' V') +
+           row('V pp',        s.vpp.toFixed(4) + ' V') +
+           row('V mean',      s.mean.toFixed(4) + ' V') +
+           row('V rms',       s.rms.toFixed(4) + ' V') +
+           row('V rms (ac)',  s.ac.toFixed(4) + ' V') +
+           (tr.hasComp
+             ? row('comp edges', s.trans) +
+               row('comp freq',  siHz(s.freq)) +
+               (s.freq ? row('comp period', siTime(1/s.freq)) : '')
+             : row('comparator', 'absent', 'warn')) +
+           /* Measured from the first cycle alone. On a machine that changes
+              speed this is the one that differs from comp freq above. */
+           row('first cycle', (tr.cycle && tr.cycle.period)
+                                ? siHz(1 / tr.cycle.period)
+                                : (tr.cycle ? 'one edge only' : 'no rising edge'),
+               (tr.cycle && tr.cycle.period) ? '' : 'warn') +
+           (s.mono ? '' : row('time order', 'NOT ascending', 'warn')) +
+           (phaseAlign
+             ? (tr.feature === null
+                 ? row('phase align', 'no fiducial', 'warn')
+                 : row('phase shift', (tr.shift === 0 ? 'reference'
+                                       : (tr.shift > 0 ? '+' : '') + siTime(tr.shift))))
+             : '') +
+           (tr.skipped ? row('rows skipped', tr.skipped, 'warn') : '') +
+         '</table></div>';
+  }
+  el.innerHTML = h;
+}
+
+function renderMarkers(){
+  var el = $('mk'), h, dt, i, tr, ia, ib;
+  if (markers.length < 1){
+    el.innerHTML = '<p class="hint">Click the plot to drop marker A, click ' +
+                   'again for B.</p>';
+    return;
+  }
+  h = '<table>' + row('A', siTime(markers[0]));
+  if (markers.length > 1){
+    dt = markers[1] - markers[0];
+    h += row('B', siTime(markers[1])) +
+         row('&Delta;t', siTime(Math.abs(dt))) +
+         row('1/&Delta;t', siHz(dt ? 1/Math.abs(dt) : 0));
+    for (i = 0; i < traces.length; i++){
+      tr = traces[i];
+      if (!tr.visible) continue;
+      ia = nearest(tr.t, markers[0]);
+      ib = nearest(tr.t, markers[1]);
+      h += row('&Delta;V ' + esc(clip(tr.name, 12)),
+               (tr.v[ib] - tr.v[ia]).toFixed(4) + ' V');
+    }
+  }
+  el.innerHTML = h + '</table>';
+}
+
+function renderAll(){ renderLegend(); renderStats(); renderMarkers(); }
+
+var readoutEl = $('readout');
+function updateReadout(){
+  var vs = visibleTraces(), i, tr, idx, lines, t;
+  if (!hover || drag || !vs.length ||
+      hover.x < rectMain.x || hover.x > rectMain.x + rectMain.w){
+    readoutEl.style.display = 'none';
+    return;
+  }
+  t = invX(hover.x);
+  lines = ['t  ' + siTime(t), '   ' + invY(hover.y).toFixed(4) + ' V  (cursor)'];
+  for (i = 0; i < vs.length; i++){
+    tr = vs[i];
+    idx = nearest(tr.t, t);
+    lines.push(clip(tr.name, 16).padEnd(17) + tr.v[idx].toFixed(4) + ' V  ' +
+               (tr.hasComp ? 'C' + tr.c[idx] : '  ') +
+               '  #' + idx);
+  }
+  readoutEl.textContent = lines.join('\n');
+  readoutEl.style.display = 'block';
+  /* keep the box away from the pointer */
+  var right = hover.x > rectMain.x + rectMain.w * 0.55;
+  readoutEl.style.right = right ? 'auto' : '8px';
+  readoutEl.style.left  = right ? '8px'  : 'auto';
+}
+
+/* ----------------------------------------------------------- interaction --- */
+
+function canvasPos(e){
+  var r = cv.getBoundingClientRect();
+  return {x:e.clientX - r.left, y:e.clientY - r.top};
+}
+
+cv.addEventListener('wheel', function(e){
+  if (!traces.length) return;
+  e.preventDefault();
+  var p = canvasPos(e);
+  var f = Math.exp((e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY) * 0.0015);
+  f = Math.min(4, Math.max(0.25, f));
+  var zoomY = e.shiftKey || e.ctrlKey || e.metaKey;
+  var zoomX = !e.shiftKey || e.ctrlKey || e.metaKey;
+
+  if (zoomX){
+    var tc = invX(p.x);
+    view.t0 = tc - (tc - view.t0) * f;
+    view.t1 = tc + (view.t1 - tc) * f;
+  }
+  if (zoomY){
+    var vc = invY(p.y);
+    view.v0 = vc - (vc - view.v0) * f;
+    view.v1 = vc + (view.v1 - vc) * f;
+    setAutoY(false);
+  }
+  clampView(); syncYInputs(); draw(); updateReadout();
+}, {passive:false});
+
+cv.addEventListener('mousedown', function(e){
+  if (e.button !== 0 || !traces.length) return;
+  var p = canvasPos(e);
+  drag = {mode:e.shiftKey ? 'box' : 'pan', x:p.x, y:p.y,
+          t0:view.t0, t1:view.t1, v0:view.v0, v1:view.v1, moved:false};
+  cv.style.cursor = e.shiftKey ? 'col-resize' : 'grabbing';
+});
+
+window.addEventListener('mousemove', function(e){
+  var p = canvasPos(e);
+  hover = p;
+  if (!traces.length && !drag) return;
+  if (drag){
+    if (Math.abs(p.x - drag.x) > 2 || Math.abs(p.y - drag.y) > 2) drag.moved = true;
+    if (drag.mode === 'pan' && drag.moved){
+      var dt = (p.x - drag.x) * (drag.t1 - drag.t0) / rectMain.w;
+      var dv = (p.y - drag.y) * (drag.v1 - drag.v0) / rectMain.h;
+      view.t0 = drag.t0 - dt; view.t1 = drag.t1 - dt;
+      view.v0 = drag.v0 + dv; view.v1 = drag.v1 + dv;
+      setAutoY(false);
+      syncYInputs();
+    }
+    draw();
+    return;
+  }
+  draw(); updateReadout();
+});
+
+window.addEventListener('mouseup', function(e){
+  if (!drag) return;
+  var p = canvasPos(e), d = drag;
+  drag = null;
+  cv.style.cursor = 'crosshair';
+
+  if (d.mode === 'box' && d.moved && Math.abs(p.x - d.x) > 4){
+    var a = invX(Math.min(d.x, p.x)), b = invX(Math.max(d.x, p.x));
+    view.t0 = a; view.t1 = b;
+    if (autoY) fitY();
+    clampView(); syncYInputs();
+  } else if (!d.moved && p.x >= rectMain.x && p.x <= rectMain.x + rectMain.w
+             && p.y >= rectMain.y && p.y <= gridBottom){
+    if (markers.length >= 2) markers = [];
+    markers.push(invX(p.x));
+    renderMarkers();
+  }
+  draw(); updateReadout();
+});
+
+cv.addEventListener('mouseleave', function(){
+  if (drag) return;
+  hover = null;
+  readoutEl.style.display = 'none';
+  draw();
+});
+
+cv.addEventListener('dblclick', function(){
+  if (!traces.length) return;
+  setAutoY(true);
+  fitAll();
+});
+
+/* ---------------------------------------------------------------- loading --- */
+
+function addTrace(tr){
+  computeStats(tr);
+  traces.push(tr);
+  return tr;
+}
+
+function loadText(text, name){
+  var tr = parseCsv(text, name);
+  if (tr.err){
+    append(name + ': ' + tr.err, true);
+    return false;
+  }
+  addTrace(tr);
+  append(name + ': ' + tr.s.n + ' pts, ' + siTime(tr.s.span) + ', ' +
+         siHz(tr.s.fs) +
+         (tr.hasComp ? ', comp ' + siHz(tr.s.freq) : ', no comparator column') +
+         (tr.skipped ? ', ' + tr.skipped + ' rows skipped' : ''),
+         !!tr.skipped);
+  return true;
+}
+
+function loadFiles(list){
+  var files = Array.prototype.slice.call(list || []);
+  if (!files.length) return;
+  var pending = files.length, added = 0;
+  say('Loading ' + files.length + ' file(s)\u2026');
+  files.forEach(function(f){
+    var rd = new FileReader();
+    rd.onload = function(){
+      if (loadText(rd.result, f.name)) added++;
+      if (!--pending) finish();
+    };
+    rd.onerror = function(){
+      append(f.name + ': could not be read', true);
+      if (!--pending) finish();
+    };
+    rd.readAsText(f);
+  });
+  function finish(){ tracesChanged(!!added); }
+}
+
+/* ------------------------------------------------------------------- wiring --- */
+
+function setAutoY(on){
+  autoY = on;
+  $('autoy').checked = on;
+}
+
+$('browse').onclick = function(){ $('file').click(); };
+$('file').onchange  = function(e){ loadFiles(e.target.files); e.target.value = ''; };
+$('reset').onclick  = function(){ setAutoY(true); fitAll(); };
+$('helpbtn').onclick = function(){ $('help').hidden = !$('help').hidden; resize(); };
+$('clrmk').onclick  = function(){ markers = []; renderMarkers(); draw(); };
+
+$('clrall').onclick = function(){
+  traces = []; markers = []; colorSeq = 0; pasteSeq = 0;
+  $('pastename').value = '';
+  renderAll(); fitAll();
+  say('Cleared. Drop CSV files anywhere, or use Open CSV…');
+};
+
+$('compmode').onchange = function(e){ compMode = e.target.value; draw(); };
+$('plottitle').oninput  = function(){ draw(); };
+
+$('align').onchange = function(e){
+  phaseAlign = e.target.checked;
+  tracesChanged(true);
+};
+
+$('autoy').onchange = function(e){
+  autoY = e.target.checked;
+  if (autoY){ fitY(); syncYInputs(); }
+  draw();
+};
+
+function applyYInputs(){
+  var a = parseFloat($('y0').value), b = parseFloat($('y1').value);
+  if (!isFinite(a) || !isFinite(b) || b <= a){ syncYInputs(); return; }
+  setAutoY(false);
+  view.v0 = a; view.v1 = b;
+  clampView(); draw();
+}
+$('y0').onchange = applyYInputs;
+$('y1').onchange = applyYInputs;
+
+$('addpaste').onclick = function(){
+  var txt = $('paste').value;
+  if (!txt.trim()){ append('paste box is empty', true); return; }
+  var nm = $('pastename').value.trim() || ('pasted-' + (++pasteSeq));
+  if (loadText(txt, nm)){
+    tracesChanged(true);
+    $('paste').value = '';
+    $('pastename').value = '';
+  } else renderAll();
+};
+
+/* ------------------------------------------------- PNG for a document --- */
+
+/**
+ * The exported image is not a screenshot. A plot in a report has to answer
+ * questions on its own -- which board, which channel, what sample rate, what
+ * the numbers were -- so the export is redrawn at a fixed size with the
+ * statistics table underneath it and the capture metadata in that table. The
+ * on-screen plot stays uncluttered; the side panel already shows all of this.
+ */
+var EXPORT = {w:1360, plotH:740, scale:2, pad:26, rowH:17, headH:30, footH:58,
+              labelW:130, colMin:104};
+
+var MONOFAM = 'ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace';
+
+/** yyyymmdd_hhmmss, so untitled exports sort and do not collide. */
+function fileStamp(){
+  var d = new Date(), p = function(n){ return ('0' + n).slice(-2); };
+  return '' + d.getFullYear() + p(d.getMonth()+1) + p(d.getDate()) + '_' +
+         p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+}
+
+/**
+ * File name for the exported image: the plot title, which is what the operator
+ * has already said this plot is. The host sanitises it again before writing --
+ * a title is free text and this one is about to become a file name.
+ */
+function pngName(){
+  var base = $('plottitle').value.trim().replace(/\s+/g, '_');
+  if (!base) base = 'B360_waveform_' + fileStamp();
+  return /\.png$/i.test(base) ? base : base + '.png';
+}
+
+/** A metadata field from the capture header, or '--' if the file had none. */
+function mv(tr, key){
+  return (tr.meta && tr.meta[key]) ? tr.meta[key] : '—';
+}
+
+/** Both ends of a time range in one unit, so the two can be compared by eye. */
+function siRange(a, b){
+  var u = timeUnit(Math.abs(b - a) || Math.abs(b) || 1);
+  return (a * u.k).toFixed(4) + ' … ' + (b * u.k).toFixed(4) + ' ' + u.u;
+}
+
+/** Trim to fit a column, measured rather than counted. */
+function fitText(s, maxw){
+  s = String(s);
+  if (ctx.measureText(s).width <= maxw) return s;
+  while (s.length > 1 && ctx.measureText(s + '…').width > maxw) s = s.slice(0, -1);
+  return s + '…';
+}
+
+/**
+ * Rows of the exported statistics table: [label, value(trace)].
+ *
+ * The fixed block matches the side panel, so a printed figure and the running
+ * application cannot disagree. The conditional rows are the ones that change
+ * how the numbers should be read -- a phase shift, skipped rows, samples out of
+ * order -- and are omitted when they have nothing to say, rather than filling
+ * the table with dashes.
+ */
+function exportRows(vs){
+  function any(f){
+    for (var i = 0; i < vs.length; i++) if (f(vs[i])) return true;
+    return false;
+  }
+  var rows = [
+    ['board',        function(tr){ return mv(tr, 'board'); }],
+    ['source',       function(tr){ return mv(tr, 'source'); }],
+    ['monitor mux',  function(tr){ return mv(tr, 'monitor_mux (mo)'); }],
+    ['captured',     function(tr){ return mv(tr, 'captured_utc'); }],
+    ['points',       function(tr){ return '' + tr.s.n; }],
+    ['span',         function(tr){ return siTime(tr.s.span); }],
+    ['sample rate',  function(tr){ return siHz(tr.s.fs); }],
+    ['interval',     function(tr){ return siTime(tr.s.dt); }],
+    ['V min',        function(tr){ return tr.s.vmin.toFixed(4) + ' V'; }],
+    ['V max',        function(tr){ return tr.s.vmax.toFixed(4) + ' V'; }],
+    ['V pp',         function(tr){ return tr.s.vpp.toFixed(4) + ' V'; }],
+    ['V mean',       function(tr){ return tr.s.mean.toFixed(4) + ' V'; }],
+    ['V rms',        function(tr){ return tr.s.rms.toFixed(4) + ' V'; }],
+    ['V rms (ac)',   function(tr){ return tr.s.ac.toFixed(4) + ' V'; }],
+    ['comp edges',   function(tr){ return tr.hasComp ? '' + tr.s.trans : 'absent'; }],
+    ['comp freq',    function(tr){ return tr.hasComp ? siHz(tr.s.freq) : 'absent'; }],
+    ['comp period',  function(tr){
+       return (tr.hasComp && tr.s.freq) ? siTime(1 / tr.s.freq) : 'absent'; }],
+    ['first cycle',  function(tr){
+       if (!tr.cycle) return 'no rising edge';
+       return tr.cycle.period
+            ? siTime(tr.cycle.period) + '  ' + siHz(1 / tr.cycle.period)
+            : 'one edge only'; }]
+  ];
+  /* Drop metadata rows no loaded file carries: pasted data has none, and four
+     rows of dashes at the top of a figure help nobody. */
+  rows = rows.filter(function(r, i){
+    if (i > 3) return true;
+    return any(function(tr){ return r[1](tr) !== '—'; });
+  });
+  if (phaseAlign)
+    rows.push(['phase shift', function(tr){
+      if (tr.feature === null) return 'no cycle found';
+      return tr.shift === 0 ? 'reference'
+                            : (tr.shift > 0 ? '+' : '') + siTime(tr.shift); }]);
+  if (any(function(tr){ return tr.skipped; }))
+    rows.push(['rows skipped', function(tr){ return '' + tr.skipped; }]);
+  if (any(function(tr){ return !tr.s.mono; }))
+    rows.push(['time order', function(tr){
+      return tr.s.mono ? 'ascending' : 'NOT ascending'; }]);
+  return rows;
+}
+
+/** Statistics table under the plot. Its header row doubles as the legend. */
+function drawExportTable(vs, rows, top, w){
+  var pad = EXPORT.pad, n = vs.length;
+  var colW = Math.max(EXPORT.colMin, (w - 2 * pad - EXPORT.labelW) / n);
+  var i, j, x, y, ry, tr;
+
+  ctx.strokeStyle = TH.rule;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, Math.round(top) + 0.5);
+  ctx.lineTo(w - pad, Math.round(top) + 0.5);
+  ctx.stroke();
+
+  ctx.textBaseline = 'middle';
+
+  /* header / legend */
+  y = top + EXPORT.headH / 2 + 3;
+  for (j = 0; j < n; j++){
+    tr = vs[j];
+    x = pad + EXPORT.labelW + j * colW;
+    ctx.fillStyle = tr.color;
+    ctx.fillRect(x, y - 5, 10, 10);
+    ctx.fillStyle = TH.title;
+    ctx.font = '600 11.5px ' + FAM;
+    ctx.textAlign = 'left';
+    ctx.fillText(fitText(tr.name, colW - 30), x + 15, y);
+  }
+
+  /* body */
+  ry = top + EXPORT.headH;
+  for (i = 0; i < rows.length; i++){
+    if (i % 2 === 0){
+      ctx.fillStyle = TH.gridm;
+      ctx.fillRect(pad, ry, w - 2 * pad, EXPORT.rowH);
+    }
+    ctx.fillStyle = TH.label;
+    ctx.font = '11px ' + FAM;
+    ctx.textAlign = 'left';
+    ctx.fillText(rows[i][0], pad + 5, ry + EXPORT.rowH / 2);
+    ctx.font = '11px ' + MONOFAM;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = TH.title;
+    for (j = 0; j < n; j++){
+      x = pad + EXPORT.labelW + j * colW;
+      ctx.fillText(fitText(rows[i][1](vs[j]), colW - 16),
+                   x + colW - 12, ry + EXPORT.rowH / 2);
+    }
+    ry += EXPORT.rowH;
+  }
+
+  /* footer: what was on screen, when it was exported, and the one caveat that
+     a reader of the figure cannot see for themselves */
+  ry += 6;
+  ctx.strokeStyle = TH.rule;
+  ctx.beginPath();
+  ctx.moveTo(pad, Math.round(ry) + 0.5);
+  ctx.lineTo(w - pad, Math.round(ry) + 0.5);
+  ctx.stroke();
+
+  ctx.font = '10.5px ' + MONOFAM;
+  ctx.fillStyle = TH.label;
+  ctx.textAlign = 'left';
+  ctx.fillText('window   t ' + siRange(view.t0, view.t1) +
+               '    V ' + view.v0.toFixed(4) + ' … ' + view.v1.toFixed(4) + ' V',
+               pad, ry + 14);
+  ctx.textAlign = 'right';
+  ctx.fillText('exported ' + new Date().toLocaleString(), w - pad, ry + 14);
+
+  ctx.textAlign = 'left';
+  if (markers.length){
+    var mk = 'marker A ' + siTime(markers[0]);
+    if (markers.length > 1){
+      var dt = markers[1] - markers[0];
+      mk += '    B ' + siTime(markers[1]) +
+            '    Δt ' + siTime(Math.abs(dt)) +
+            '    1/Δt ' + siHz(dt ? 1 / Math.abs(dt) : 0);
+    }
+    ctx.fillText(mk, pad, ry + 30);
+  }
+  ctx.fillStyle = TH.faint;
+  ctx.fillText('voltage is at the ADC pin; the 1k/4.53k divider is not undone. '
+             + 'comparator frequency is from rising edges only.', pad, ry + 46);
+}
+
+/**
+ * Redraw everything onto an offscreen canvas at export size.
+ *
+ * draw() renders through module-level state rather than parameters, so the
+ * state is swapped, the drawing done, and the state put back in a finally --
+ * an exception mid-export must not leave the visible canvas pointing at a
+ * detached context.
+ */
+function renderExport(){
+  var vs = visibleTraces();
+  var rows = vs.length ? exportRows(vs) : [];
+  var panelH = vs.length
+             ? (EXPORT.headH + rows.length * EXPORT.rowH + EXPORT.footH) : 0;
+  var w = Math.max(EXPORT.w,
+                   EXPORT.pad * 2 + EXPORT.labelW + vs.length * EXPORT.colMin);
+  var h = EXPORT.plotH + panelH;
+
+  var off = document.createElement('canvas');
+  off.width  = Math.round(w * EXPORT.scale);
+  off.height = Math.round(h * EXPORT.scale);
+  var octx = off.getContext('2d');
+  octx.setTransform(EXPORT.scale, 0, 0, EXPORT.scale, 0, 0);
+
+  var keep = {ctx:ctx, W:W, H:H, hover:hover, drag:drag, bottom:exportBottom};
+  ctx = octx; W = w; H = h; hover = null; drag = null; exportBottom = panelH;
+  try {
+    draw();
+    if (vs.length) drawExportTable(vs, rows, h - panelH, w);
+  } finally {
+    ctx = keep.ctx; W = keep.W; H = keep.H;
+    hover = keep.hover; drag = keep.drag; exportBottom = keep.bottom;
+  }
+  draw();                       /* rectMain and gridBottom belong to the screen */
+  return off;
+}
+
+$('png').onclick = function(){
+  var name = pngName(), shot;
+  try { shot = renderExport(); }
+  catch (e){ append('could not build the image: ' + e, true); return; }
+
+  var api = hostApi();
+
+  /* Inside the application, save through the host. pywebview cancels browser
+     downloads unless ALLOW_DOWNLOADS is set, which it is not, so an <a download>
+     here produces no file and no error at all. */
+  if (api){
+    var url;
+    try { url = shot.toDataURL('image/png'); }
+    catch (e){ append('could not read the plot back: ' + e, true); return; }
+    api.save_png({name: name, data: url}).then(function(r){
+      if (r && r.ok) append('saved ' + r.path);
+      else if (r && r.error !== 'cancelled') append('save failed: ' + r.error, true);
+    })['catch'](function(e){ append('save failed: ' + e, true); });
+    return;
+  }
+
+  /* Opened straight in a browser: the download folder is all there is. */
+  if (!shot.toBlob){ append('this browser cannot export PNG', true); return; }
+  shot.toBlob(function(b){
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(b);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);
+  });
+};
+
+$('legend').addEventListener('change', function(e){
+  var i = e.target.getAttribute('data-vis');
+  if (i === null) return;
+  traces[+i].visible = e.target.checked;
+  /* The alignment reference is the first VISIBLE trace, so hiding one can move
+     everything else. */
+  applyAlign();
+  renderStats();
+  renderMarkers();
+  if (autoY) fitY();
+  draw();
+});
+
+/* 'input' rather than 'change' so the plot follows the colour picker live */
+$('legend').addEventListener('input', function(e){
+  var i = e.target.getAttribute('data-col');
+  if (i === null) return;
+  traces[+i].color = e.target.value;
+  renderStats();
+  draw();
+});
+
+$('legend').addEventListener('click', function(e){
+  var sv = e.target.getAttribute('data-save');
+  if (sv !== null){ saveTrace(traces[+sv]); return; }
+  var i = e.target.getAttribute('data-del');
+  if (i === null) return;
+  traces.splice(+i, 1);
+  if (!traces.length) markers = [];
+  tracesChanged(true);
+});
+
+/* drag and drop onto the whole window */
+var dropEl = $('drop'), dragDepth = 0;
+window.addEventListener('dragenter', function(e){
+  e.preventDefault(); dragDepth++; dropEl.classList.add('on');
+});
+window.addEventListener('dragover', function(e){
+  e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+});
+window.addEventListener('dragleave', function(e){
+  e.preventDefault();
+  if (--dragDepth <= 0){ dragDepth = 0; dropEl.classList.remove('on'); }
+});
+window.addEventListener('drop', function(e){
+  e.preventDefault();
+  dragDepth = 0; dropEl.classList.remove('on');
+  loadFiles(e.dataTransfer.files);
+});
+
+/* ------------------------------------------------------------ saving CSV --- */
+
+/** The host application, when this page is running inside it. */
+function hostApi(){
+  return (window.pywebview && window.pywebview.api) || null;
+}
+
+function csvName(tr){
+  var n = tr.name.replace(/[^\w.\-]+/g, '_');
+  return /\.csv$/i.test(n) ? n : n + '.csv';
+}
+
+function saveTrace(tr){
+  var text = tr.raw || '';
+  if (!text){ append('nothing to save for ' + tr.name, true); return; }
+  var api = hostApi();
+  if (api){
+    api.save_csv({name: csvName(tr), text: text}).then(function(r){
+      if (r && r.ok) append('saved ' + r.path);
+      else if (r && r.error !== 'cancelled') append('save failed: ' + r.error, true);
+    })['catch'](function(e){ append('save failed: ' + e, true); });
+    return;
+  }
+  /* Plain browser: hand it over as a download. */
+  var blob = new Blob([text], {type: 'text/csv'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = csvName(tr);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 4000);
+}
+
+/* --------------------------------------------------- capture from a board --- */
+
+/** Called by the host when a capture makes progress. */
+window.b360_capture_progress = function(msg){
+  var el = $('capstat');
+  if (el){ el.textContent = msg; el.className = 'busy'; }
+};
+
+/** Host tells both windows when the folder or the auto-save flag changes. */
+window.b360_settings_changed = function(saveDir, autosave){
+  var d = $('capdir'), a = $('capauto');
+  if (saveDir && d) d.textContent = saveDir;
+  if (a && autosave !== null && autosave !== undefined) a.checked = !!autosave;
+};
+
+/** Called by the host to hand this page a block of CSV (e.g. from the terminal). */
+window.b360_receive = function(name, text){
+  if (loadText(text, name)) tracesChanged(true);
+  else renderAll();
+};
+
+function capBusy(on, msg, bad){
+  $('capgo').disabled = on;
+  var el = $('capstat');
+  el.textContent = msg;
+  el.className = bad ? 'bad' : (on ? 'busy' : '');
+}
+
+/* The host tells both windows when the board stops answering, so this panel
+   cannot sit on "ready" while there is nothing on the other end. */
+window.b360_link_state = function(state, text){
+  if (!hostApi()) return;
+  if (state === 'lost')        capBusy(true, 'link lost \u2014 reconnecting\u2026', true);
+  else if (state === 'retry')  capBusy(true, text + '\u2026', true);
+  else if (state === 'up')     capBusy(false, 'reconnected to ' + text);
+  /* Connect and Disconnect are pressed in the other window, so without these
+     the panel keeps whatever it last said and Capture stays disabled. */
+  else if (state === 'open')   capBusy(false, 'ready \u2014 ' + text);
+  else if (state === 'closed') capBusy(true, 'connect in the console window first');
+};
+
+function initCapture(){
+  var api = hostApi();
+  if (!api) return;                 /* a browser cannot open a socket */
+  $('cappanel').hidden = false;
+
+  api.get_defaults({}).then(function(d){
+    if (!d || !d.ok) return;
+    if (d.theme) window.b360_set_theme(d.theme);
+    $('capdir').textContent = d.save_dir || '';
+    $('capauto').checked = d.autosave !== false;
+    capBusy(false, 'ready \u2014 connect in the console window');
+  })['catch'](function(){});
+
+  $('capgo').onclick = function(){
+    capBusy(true, 'starting\u2026');
+    api.capture({rate: $('caprate').value.trim(),
+                 channel: $('capchan').value.trim(),
+                 count: parseInt($('capcount').value, 10) || 4096})
+      .then(function(r){
+        if (!r || !r.ok){ capBusy(false, (r && r.error) || 'capture failed', true); return; }
+        if (loadText(r.csv, r.name)) tracesChanged(true);
+        capBusy(false, (r.saved ? 'saved ' + r.saved : 'captured')
+                     + (r.retried ? '  (a window was retried)' : ''));
+      })['catch'](function(e){ capBusy(false, 'capture failed: ' + e, true); });
+  };
+
+  $('capauto').onchange = function(){
+    api.set_autosave({on: $('capauto').checked})['catch'](function(){});
+  };
+
+  $('capdirbtn').onclick = function(){
+    api.choose_save_dir({}).then(function(r){
+      if (r && r.ok) $('capdir').textContent = r.save_dir;
+    })['catch'](function(){});
+  };
+}
+
+function resize(){
+  var r = $('plotwrap').getBoundingClientRect();
+  dpr = window.devicePixelRatio || 1;
+  W = Math.max(240, Math.round(r.width));
+  H = Math.max(180, Math.round(r.height));
+  cv.width  = Math.round(W * dpr);
+  cv.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  draw();
+}
+window.addEventListener('resize', resize);
+if (window.ResizeObserver) new ResizeObserver(resize).observe($('plotwrap'));
+
+/* boot */
+FAM = getComputedStyle(document.body).fontFamily || 'sans-serif';
+readTheme();
+renderAll();
+syncYInputs();
+resize();
+say('Drop CSV files anywhere, or use Open CSV…');
+
+if (window.pywebview && window.pywebview.api) initCapture();
+else window.addEventListener('pywebviewready', initCapture);
+
+/* Files handed over by the standalone launcher, if this was opened that way. */
+if (window.B360_PRELOAD && window.B360_PRELOAD.length){
+  (function(){
+    var pre = window.B360_PRELOAD, ok = 0, i;
+    say('Loading ' + pre.length + ' file(s)…');
+    for (i = 0; i < pre.length; i++)
+      if (loadText(pre[i].text, pre[i].name)) ok++;
+    renderAll();
+    if (ok) fitAll(); else draw();
+  })();
+}
+</script>
+</body>
+</html>
