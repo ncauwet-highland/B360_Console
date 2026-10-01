@@ -173,6 +173,19 @@ def file_dialog_type(kind):
     return getattr(webview, kind + "_DIALOG")       #< pywebview older than 5
 
 
+def trace_label(filename, saved):
+    """The name a trace carries: a file name only when a file exists.
+
+    The pages use this as the trace's label, and a label ending in .csv reads as
+    "this is on disk". With auto-save off nothing was written, so the extension
+    comes off -- the operator should not have to check the folder to find out.
+    csvName() in the viewer puts .csv back if they later save it by hand.
+    """
+    if saved:
+        return filename
+    return filename[:-4] if filename.lower().endswith(".csv") else filename
+
+
 def decode_data_url(text):
     """The bytes carried by a `data:` URL, which is how a canvas crosses the bridge."""
     head, sep, payload = str(text or "").partition(",")
@@ -432,11 +445,12 @@ class Api:
                                 "# B360 waveform capture\n# board: %s\n" % app.board_id, 1)
 
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        name = "b360_capture_%s.csv" % stamp
-        saved = app.autosave(name, text)
+        fname = "b360_capture_%s.csv" % stamp
+        saved = app.autosave(fname, text)
         app.console_js("b360_event", "note",
                        "capture complete: %s" % (saved or "not saved to disk"))
-        return {"ok": True, "csv": text, "name": name, "saved": saved,
+        return {"ok": True, "csv": text, "name": trace_label(fname, saved),
+                "saved": saved,
                 "retried": any("retried" in n for n in notes)}
 
     @guard
@@ -486,10 +500,10 @@ class Api:
         head.append(cap.CSV_HEADER)
 
         text = "\n".join(head + [str(r) for r in rows]) + "\n"
-        name = "b360_capture_%s.csv" % datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        saved = app.autosave(name, text)
-        return {"ok": True, "csv": text, "name": name, "saved": saved,
-                "samples": len(rows)}
+        fname = "b360_capture_%s.csv" % datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        saved = app.autosave(fname, text)
+        return {"ok": True, "csv": text, "name": trace_label(fname, saved),
+                "saved": saved, "samples": len(rows)}
 
     @guard
     def plot_text(self, opts):

@@ -124,6 +124,8 @@ class _Reader:
 class TcpTransport(_Reader):
     """Command socket over TCP. Standard library only."""
 
+    echoes_input = False        #< custom_tcps() does not echo
+
     def __init__(self, host, port=DEFAULT_TCP_PORT,
                  connect_timeout=DEFAULT_CONNECT_TIMEOUT):
         self.name = "tcp://%s:%d" % (host, port)
@@ -218,6 +220,8 @@ class SerialTransport(_Reader):
     pyserial rather than termios so this works on Windows, where the executable
     actually runs.
     """
+
+    echoes_input = True         #< read_to_process() echoes what it accepts
 
     def __init__(self, port, baud=DEFAULT_BAUD,
                  connect_timeout=DEFAULT_CONNECT_TIMEOUT):
@@ -353,7 +357,10 @@ class Board:
             self.transport.drain()
             self.transport.write((line + self.eol).encode("ascii", "replace"))
             raw = self.transport.read_reply(timeout=timeout, idle_gap=idle_gap)
-        return raw.decode("ascii", errors="replace")
+        text = raw.decode("ascii", errors="replace")
+        if getattr(self.transport, "echoes_input", False):
+            text = strip_echo(text, line)
+        return text
 
     def close(self):
         with self._lock:
@@ -366,6 +373,24 @@ class Board:
 
     def __exit__(self, *exc):
         self.close()
+
+
+def strip_echo(reply, sent):
+    """Remove the USB echo of `sent` from the front of `reply`.
+
+    read_to_process() prints every printable character it accepts
+    (helper_funcs.c:96), skipping CR, LF, backspace, DEL and ESC, so a reply that
+    came back over USB is prefixed with the command text and no line ending --
+    `WC` answers "WC\r\n10000; \r\n". TCP hands the buffer straight to
+    process_commands() and echoes nothing (loopback.c:155).
+
+    Only an exact prefix is removed. A reply that does not start with what we
+    sent is handed back untouched rather than trimmed on a guess.
+    """
+    echo = "".join(c for c in sent if c not in "\r\n\b\x1b\x7f")
+    if echo and reply.startswith(echo):
+        return reply[len(echo):]
+    return reply
 
 
 def strip_frame(reply):
