@@ -40,13 +40,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
+import product                      #< after the path fix, so a source run finds it
+
 #: First eight bytes of any PNG file, checked before writing one.
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 CONSOLE_HTML = "b360_console.html"
 VIEWER_HTML = "b360_wave_viewer.html"
 MARKER = "<!--PRELOAD-->"
-SELFTEST_LOG = "b360_console_selftest.txt"
 MAX_CSV_BYTES = 64 * 1024 * 1024
 
 
@@ -68,24 +69,27 @@ def die(msg):
     if sys.stderr is None and sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.user32.MessageBoxW(None, msg, "B360 Console", 0x10)
+            ctypes.windll.user32.MessageBoxW(None, msg, product.P.title, 0x10)
         except Exception:
             pass
     raise SystemExit(2)
 
 
-def asset(name):
-    """Locate a bundled page: the PyInstaller payload dir, else alongside us."""
-    base = getattr(sys, "_MEIPASS", None) or HERE
-    return os.path.join(base, name)
+asset = product.asset           #< re-exported; product.py owns it (see its docstring)
 
 
 def read_asset(name):
+    """Read a bundled page with the product tokens filled in.
+
+    The one choke point for loading a page, so {{PRODUCT}}/{{EXE}} cannot be
+    missed. inject() splices preloaded CSV in afterwards, which is the right
+    order: data must never be token-substituted.
+    """
     path = asset(name)
     if not os.path.isfile(path):
         die("bundled page not found:\n%s" % path)
     with open(path, "r", encoding="utf-8") as fh:
-        return fh.read()
+        return product.P.fill(fh.read())
 
 
 # --------------------------------------------------------------- settings ---
@@ -96,6 +100,17 @@ def settings_path():
     else:
         base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     return os.path.join(base, "b360_console", "settings.json")
+
+
+#: Settings keys that belong to one product rather than to the installation. An
+#: address with no record of which product it belongs to is a hazard, so the whole
+#: connection group lives in settings["products"][<name>] -- keeping the group
+#: together means there is no judgement call about which key is safe to share, and
+#: a product on a different port needs no code change.
+#:
+#: Everything else (theme, activity_log, autosave, save_dir, png_dir) is shared:
+#: set the captures folder once, for every product.
+PER_PRODUCT = ("kind", "host", "port", "eol")
 
 
 def load_settings():
@@ -121,7 +136,8 @@ def save_settings(data):
 def default_save_dir():
     home = os.path.expanduser("~")
     docs = os.path.join(home, "Documents")
-    return os.path.join(docs if os.path.isdir(docs) else home, "B360 captures")
+    return os.path.join(docs if os.path.isdir(docs) else home,
+                        product.P.captures_folder)
 
 
 def default_png_dir():
@@ -260,6 +276,51 @@ RETRY_BACKOFF = (1.0, 2.0, 4.0, 8.0)
 
 # ------------------------------------------------------------- the bridge ---
 
+#: Optional GUI windows beyond the terminal. A product's profile lists which ids
+#: are live; everything here is gated on that, so one page and one Api serve every
+#: product with no second copy to keep in sync.
+#:
+#: `writes` declares whether the panel SETS things on the device rather than
+#: displaying the result of a query. A writing panel sends commands the operator
+#: never typed, which the board's front panel indicates as activity -- so it must
+#: echo every line it sends into the activity log, the way Api.capture()'s
+#: echo()/flush() pair already does, and must refuse while app.capturing is set.
+#: Nothing declares writes:True yet; the field is where that contract is recorded.
+PANELS = {
+    "waveform": {
+        "page":   "b360_wave_viewer.html",
+        "title":  "%s Waveform",          #< % the product name
+        "label":  "the waveform viewer",  #< how a refusal names it
+        "ui":     ("plotwin", "capbar", "wfhint"),   #< console elements it owns
+        "writes": False,
+    },
+}
+
+
+def panels_on():
+    """Ids of the panels this product was built with."""
+    return tuple(k for k in PANELS if product.P.has(k))
+
+
+def panel(panel_id):
+    """Gate an Api method on a panel being part of this product.
+
+    Sits under @guard so a refusal still comes back in the standard envelope, and
+    copies __name__/__doc__ for the same reason guard does.
+    """
+    def deco(fn):
+        def wrapper(self, opts=None):
+            if not product.P.has(panel_id):
+                return {"ok": False,
+                        "error": "%s is not part of %s"
+                                 % (PANELS[panel_id]["label"], product.P.title)}
+            return fn(self, opts)
+        wrapper.__name__ = fn.__name__
+        wrapper.__doc__ = fn.__doc__
+        return wrapper
+    return deco
+
+
 def guard(fn):
     """Uniform {ok, error} envelope, so a raised exception never reaches JS."""
     def wrapper(self, opts=None):
@@ -290,19 +351,22 @@ class Api:
     @guard
     def get_defaults(self, opts):
         from b360_link import DEFAULT_EOL_TCP, DEFAULT_EOL_SERIAL
-        s = self._app.settings
+        app = self._app
         return {"ok": True,
-                "kind": s.get("kind", "tcp"),
-                "host": s.get("host", ""),
-                "port": s.get("port", 5007),
-                "eol": s.get("eol", ""),
+                "product": product.P.name,
+                "panels": list(panels_on()),
+                # the connection comes from this product's own section
+                "kind": app.setting("kind", "tcp"),
+                "host": app.setting("host", ""),
+                "port": app.setting("port", 5007),
+                "eol": app.setting("eol", ""),
                 "eol_tcp": DEFAULT_EOL_TCP,
                 "eol_serial": DEFAULT_EOL_SERIAL,
-                "save_dir": s.get("save_dir", default_save_dir()),
-                "png_dir": s.get("png_dir", default_png_dir()),
-                "autosave": s.get("autosave", True),
-                "activity_log": s.get("activity_log", True),
-                "theme": s.get("theme", "light")}
+                "save_dir": app.setting("save_dir", default_save_dir()),
+                "png_dir": app.setting("png_dir", default_png_dir()),
+                "autosave": app.setting("autosave", True),
+                "activity_log": app.setting("activity_log", True),
+                "theme": app.setting("theme", "light")}
 
     @guard
     def list_serial(self, opts):
@@ -330,10 +394,8 @@ class Api:
         # makes the page treat it as deliberately chosen, which stops it from
         # following the transport -- and CRLF over USB draws a spurious extra
         # reply. Only set_eol(), which is the operator choosing, pins it.
-        app.settings.update({"kind": opts.get("kind", "tcp"),
-                             "host": opts.get("host", ""),
-                             "port": int(opts.get("port") or 5007)})
-        save_settings(app.settings)
+        app.remember(kind=opts.get("kind", "tcp"), host=opts.get("host", ""),
+                     port=int(opts.get("port") or 5007))
         app.board_id = app.identify()
         app.link_js("open", board.name)   #< the waveform window has no other cue
         return {"ok": True, "name": board.name, "id": app.board_id}
@@ -355,8 +417,7 @@ class Api:
         name = opts.get("eol", "crlf")
         if self._app.board:
             self._app.board.eol = eol_bytes(name)
-        self._app.settings["eol"] = name
-        save_settings(self._app.settings)
+        self._app.remember(eol=name)
         return {"ok": True, "eol": name}
 
     @guard
@@ -387,6 +448,7 @@ class Api:
     # -- waveform ------------------------------------------------------------
 
     @guard
+    @panel("waveform")
     def capture(self, opts):
         import b360_capture as cap
         app = self._app
@@ -435,17 +497,18 @@ class Api:
                                count=int(opts.get("count") or cap.WAVE_DEPTH),
                                window=int(opts.get("window") or cap.DEFAULT_WINDOW),
                                retries=int(opts.get("retries") or 2),
-                               progress=progress, echo=echo)
+                               progress=progress, echo=echo,
+                               product=product.P.name)
         finally:
             flush()
             app.capturing = False
 
         if app.board_id:
-            text = text.replace("# B360 waveform capture\n",
-                                "# B360 waveform capture\n# board: %s\n" % app.board_id, 1)
+            banner = "# %s waveform capture\n" % product.P.name
+            text = text.replace(banner, banner + "# board: %s\n" % app.board_id, 1)
 
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        fname = "b360_capture_%s.csv" % stamp
+        fname = "%s%s.csv" % (product.P.capture_prefix, stamp)
         saved = app.autosave(fname, text)
         app.console_js("b360_event", "note",
                        "capture complete: %s" % (saved or "not saved to disk"))
@@ -454,6 +517,7 @@ class Api:
                 "retried": any("retried" in n for n in notes)}
 
     @guard
+    @panel("waveform")
     def save_capture(self, opts):
         """Turn rows typed out by hand into a proper capture file.
 
@@ -484,7 +548,7 @@ class Api:
             if step > 0:
                 rate = 1.0 / step
 
-        head = ["# B360 waveform capture"]
+        head = ["# %s waveform capture" % product.P.name]
         if app.board_id:
             head.append("# board: %s" % app.board_id)
         if app.board:
@@ -500,12 +564,14 @@ class Api:
         head.append(cap.CSV_HEADER)
 
         text = "\n".join(head + [str(r) for r in rows]) + "\n"
-        fname = "b360_capture_%s.csv" % datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        fname = "%s%s.csv" % (product.P.capture_prefix,
+                              datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
         saved = app.autosave(fname, text)
         return {"ok": True, "csv": text, "name": trace_label(fname, saved),
                 "saved": saved, "samples": len(rows)}
 
     @guard
+    @panel("waveform")
     def plot_text(self, opts):
         """Hand a block of CSV from the terminal to the waveform window."""
         self._app.show_plot_window()
@@ -514,15 +580,17 @@ class Api:
         return {"ok": True}
 
     @guard
+    @panel("waveform")
     def show_plot(self, opts):
         self._app.show_plot_window()
         return {"ok": True}
 
     @guard
+    @panel("waveform")
     def save_csv(self, opts):
         """Write CSV where the user asks. Falls back to the autosave folder."""
         app = self._app
-        name = opts.get("name") or "b360_capture.csv"
+        name = opts.get("name") or (product.P.capture_prefix + ".csv")
         text = opts.get("text") or ""
         path = None
         if app.plot is not None:
@@ -544,6 +612,7 @@ class Api:
         return {"ok": True, "path": path}
 
     @guard
+    @panel("waveform")
     def save_png(self, opts):
         """Write the plot image, and remember where the operator put it.
 
@@ -562,7 +631,7 @@ class Api:
         thought they should be.
         """
         app = self._app
-        name = safe_name(opts.get("name"), "B360_waveform", ".png")
+        name = safe_name(opts.get("name"), product.P.png_fallback, ".png")
         raw = decode_data_url(opts.get("data"))
         if not raw.startswith(PNG_MAGIC):
             return {"ok": False, "error": "that is not a PNG image"}
@@ -599,11 +668,11 @@ class Api:
 
         with open(path, "wb") as fh:
             fh.write(raw)
-        app.settings["png_dir"] = os.path.dirname(os.path.abspath(path))
-        save_settings(app.settings)
+        app.remember(png_dir=os.path.dirname(os.path.abspath(path)))
         return {"ok": True, "path": path}
 
     @guard
+    @panel("waveform")
     def choose_save_dir(self, opts):
         app = self._app
         # Prefer the window that asked; the terminal must work on its own, since
@@ -613,8 +682,7 @@ class Api:
         if not chosen:
             return {"ok": False, "error": "cancelled"}
         path = chosen if isinstance(chosen, str) else chosen[0]
-        app.settings["save_dir"] = path
-        save_settings(app.settings)
+        app.remember(save_dir=path)
         app.announce_settings()
         return {"ok": True, "save_dir": path}
 
@@ -623,8 +691,7 @@ class Api:
         """One toggle for both windows, so they cannot drift apart."""
         mode = 'dark' if opts.get("theme") == 'dark' else 'light'
         app = self._app
-        app.settings["theme"] = mode
-        save_settings(app.settings)
+        app.remember(theme=mode)
         app.broadcast("b360_set_theme", mode)
         return {"ok": True, "theme": mode}
 
@@ -632,15 +699,14 @@ class Api:
     def set_activity_log(self, opts):
         """Remember whether the terminal shows the app's own grey lines."""
         app = self._app
-        app.settings["activity_log"] = bool(opts.get("on", True))
-        save_settings(app.settings)
+        app.remember(activity_log=bool(opts.get("on", True)))
         return {"ok": True}
 
     @guard
+    @panel("waveform")
     def set_autosave(self, opts):
         app = self._app
-        app.settings["autosave"] = bool(opts.get("on", True))
-        save_settings(app.settings)
+        app.remember(autosave=bool(opts.get("on", True)))
         app.announce_settings()
         return {"ok": True}
 
@@ -665,6 +731,33 @@ class App:
         self.preload = preload
         self.shutting_down = False
         self.api = Api(self)
+
+    # -- settings -----------------------------------------------------------
+
+    def setting(self, key, default=None):
+        """Read a setting, from this product's section for a per-product key."""
+        if key in PER_PRODUCT:
+            return (self.settings.get("products", {})
+                                 .get(product.P.name, {})
+                                 .get(key, default))
+        return self.settings.get(key, default)
+
+    def remember(self, **kw):
+        """Persist settings, routing per-product keys into this product's section.
+
+        Re-reads the file and changes only these keys. Two consoles can be open at
+        once, and writing a whole dict back from a stale copy would erase the other
+        product's section. It also leaves a pre-sectioning file's top-level keys
+        alone: they have no provable owner, so nothing claims them.
+        """
+        data = load_settings()
+        for key, value in kw.items():
+            if key in PER_PRODUCT:
+                data.setdefault("products", {}).setdefault(product.P.name, {})[key] = value
+            else:
+                data[key] = value
+        save_settings(data)
+        self.settings = data
 
     # -- pushing into the pages ---------------------------------------------
 
@@ -839,6 +932,11 @@ class App:
             return ""
 
     def show_plot_window(self):
+        # One guard covers every caller -- a CSV on the command line, --smoke and
+        # the Api -- so a build without the panel cannot try to open a page that
+        # is not in its bundle.
+        if not product.P.has("waveform"):
+            return False
         if self.plot is None:
             self._create_plot_window()
         else:
@@ -850,10 +948,11 @@ class App:
 
     def _create_plot_window(self):
         import webview
-        html = inject(read_asset(VIEWER_HTML), self.preload)
+        html = inject(read_asset(PANELS["waveform"]["page"]), self.preload)
         self.plot_url = write_temp(html, "wave")
         self.plot = webview.create_window(
-            "B360 Waveform", url=file_url(self.plot_url),
+            PANELS["waveform"]["title"] % product.P.name,
+            url=file_url(self.plot_url),
             js_api=self.api, width=1180, height=780, min_size=(760, 520),
             text_select=True)
         # Closing hides rather than destroys, so loaded traces survive.
@@ -900,62 +999,106 @@ class App:
 
 def parse_flags(argv):
     """Split diagnostics off the argument list. Everything else is a CSV path."""
-    files, selftest, smoke = [], False, 0.0
+    files, selftest, smoke, which = [], False, 0.0, None
     it = iter(argv)
     for a in it:
         if a == "--selftest":
             selftest = True
         elif a == "--smoke":
             smoke = float(next(it, "4"))
+        elif a == "--product":
+            which = next(it, "")       #< source runs; a build bakes product.json
+        elif a.startswith("--product="):
+            which = a.split("=", 1)[1]
         else:
             files.append(a)
-    return files, selftest, smoke
+    return files, selftest, smoke, which
 
 
 def run_selftest(payload, problems):
+    """Report what this build is, and verdict on whether it can run.
+
+    Rows are (label, value, ok) so the verdict comes from the checks themselves
+    rather than from re-parsing the printed text -- the old version decided by
+    looking for "no (" in lines starting "b360_", which would have failed every
+    terminal-only build, since b360_capture is deliberately not bundled for one.
+    """
     def importable(name):
         try:
             __import__(name)
-            return "yes"
+            return "yes", True
         except ImportError as exc:
-            return "no (%s)" % exc
+            return "no (%s)" % exc, False
 
-    viewer = inject(read_asset(VIEWER_HTML), payload)
-    report = [
-        "console page  : %s" % asset(CONSOLE_HTML),
-        "viewer page   : %s" % asset(VIEWER_HTML),
-        "viewer bytes  : %d (preload marker: %s)"
-        % (len(viewer.encode("utf-8")),
-           "spliced" if payload else
-           ("present, unused" if MARKER in viewer else "MISSING")),
-        "preloaded     : %d file(s)%s"
-        % (len(payload), ", %d skipped" % len(problems) if problems else ""),
-        "b360_link     : %s" % importable("b360_link"),
-        "b360_capture  : %s" % importable("b360_capture"),
-        "pywebview     : %s" % importable("webview"),
-        "pyserial      : %s" % importable("serial"),
-        "settings file : %s" % settings_path(),
-        "capture folder: %s" % (load_settings().get("save_dir") or default_save_dir()),
-        "PNG folder    : %s" % (load_settings().get("png_dir") or default_png_dir()),
-        "frozen        : %s" % bool(getattr(sys, "frozen", False)),
+    def page_check(name):
+        """Loaded, token-substituted, and the preload marker still intact."""
+        try:
+            text = read_asset(name)
+        except SystemExit:
+            return "MISSING", False
+        left = product.P.leftover_tokens(text)
+        if left:
+            return "unsubstituted %s" % " ".join(left), False
+        return ("%d bytes, marker %s"
+                % (len(text.encode("utf-8")),
+                   "present" if MARKER in text else "absent")), True
+
+    on = panels_on()
+    rows = [("product", product.P.name, True),
+            ("panels", ", ".join(on) or "none (terminal only)", True),
+            ("console page", asset(CONSOLE_HTML), True),
+            ("console html", ) + page_check(CONSOLE_HTML)]
+
+    # Only a build that HAS the viewer is asked about the viewer. Reading it
+    # unconditionally is what used to abort the selftest, and with it the build.
+    if "waveform" in on:
+        rows.append(("viewer page", asset(PANELS["waveform"]["page"]), True))
+        rows.append(("viewer html", ) + page_check(PANELS["waveform"]["page"]))
+        rows.append(("b360_capture", ) + importable("b360_capture"))
+
+    rows += [
+        ("preloaded", "%d file(s)%s"
+            % (len(payload), ", %d skipped" % len(problems) if problems else ""),
+         not problems),
+        ("b360_link", ) + importable("b360_link"),
+        ("pywebview", ) + importable("webview"),
+        ("pyserial", ) + importable("serial"),
+        ("settings file", settings_path(), True),
+        ("capture folder", load_settings().get("save_dir") or default_save_dir(), True),
+        ("PNG folder", load_settings().get("png_dir") or default_png_dir(), True),
+        ("frozen", "%s" % bool(getattr(sys, "frozen", False)), True),
     ]
+
+    report = ["%-14s: %s%s" % (label, value, "" if ok else "   <-- FAIL")
+              for label, value, ok in rows]
     for line in report:
         out(line)
+    for p in problems:
+        out("note          : %s" % p)
     # A windowed build has no console, so leave the report somewhere readable.
     try:
-        with open(os.path.join(tempfile.gettempdir(), SELFTEST_LOG),
+        with open(os.path.join(tempfile.gettempdir(), product.P.selftest_log),
                   "w", encoding="utf-8") as fh:
             fh.write("\n".join(report) + "\n")
     except OSError:
         pass
-    ok = all(not line.endswith(")") or "no (" not in line
-             for line in report if line.startswith(("b360_", "pywebview")))
-    return 0 if (ok and not problems) else 1
+    return 0 if all(ok for _, _, ok in rows) else 1
 
 
 def main(argv):
-    args, selftest, smoke = parse_flags(argv[1:])
+    args, selftest, smoke, which = parse_flags(argv[1:])
+    if which:
+        try:
+            product.use(which)
+        except (ValueError, OSError) as exc:
+            die("%s" % exc)
     payload, problems = collect(args)
+    # A terminal-only build has nothing to plot, so say so rather than opening a
+    # window that does not exist in its bundle.
+    if payload and not product.P.has("waveform"):
+        problems.append("%s has no waveform viewer, so %d CSV file(s) were ignored"
+                        % (product.P.title, len(payload)))
+        payload = []
     for p in problems:
         out("skipped %s" % p, err=True)
 
@@ -975,7 +1118,7 @@ def main(argv):
     # and no transcript can be copied out. The pages narrow it back down to the
     # parts worth copying; see the selection rules in b360_console.html.
     app.console = webview.create_window(
-        "B360 Console", url=file_url(console_url), js_api=app.api,
+        product.P.title, url=file_url(console_url), js_api=app.api,
         width=1040, height=720, min_size=(680, 440), text_select=True)
 
     def console_closing():

@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>B360 Waveform Viewer</title>
+<title>{{PRODUCT}} Waveform Viewer</title>
 <!--
-  B360 waveform CSV viewer.
+  {{PRODUCT}} waveform CSV viewer.
 
   Self-contained: no Python, no install, no network, no third-party library.
   Open this file in any browser and drop the CSV files produced by the WR
@@ -125,7 +125,7 @@ textarea{width:100%;height:74px;font:12px var(--mono);border:1px solid var(--lin
 <body>
 
 <header>
-  <h1>B360 Waveform Viewer</h1>
+  <h1>{{PRODUCT}} Waveform Viewer</h1>
   <input type="text" id="plottitle" placeholder="plot title"
          title="drawn above the plot, and used as the file name by Save PNG">
   <button class="pri" id="browse">Open CSV&hellip;</button>
@@ -167,10 +167,10 @@ textarea{width:100%;height:74px;font:12px var(--mono);border:1px solid var(--lin
   <b>board</b>, <b>source</b>, <b>monitor mux</b> and <b>captured</b>. Under it go
   the exact time and voltage window shown, any marker readings, the export time,
   and the divider caveat below. Rows that have nothing to say are left out.</p>
-  <p>Running inside <code>B360_console.exe</code> this opens a save dialog,
-  starting in <code>Documents\B360 captures\saved_PNGs</code> and thereafter
+  <p>Running inside <code>{{BINARY}}</code> this opens a save dialog,
+  starting in <code>Documents\{{PRODUCT}} captures\saved_PNGs</code> and thereafter
   wherever you last saved one. The file is named after the plot title, or
-  <code>B360_waveform_&lt;timestamp&gt;.png</code> if the title is blank. Opened as
+  <code>{{PRODUCT}}_waveform_&lt;timestamp&gt;.png</code> if the title is blank. Opened as
   a plain file in a browser there is no dialog to offer &mdash; the image goes to
   the browser's download folder under the same name.</p>
   <p><b>Mouse.</b></p>
@@ -1439,7 +1439,7 @@ function fileStamp(){
  */
 function pngName(){
   var base = $('plottitle').value.trim().replace(/\s+/g, '_');
-  if (!base) base = 'B360_waveform_' + fileStamp();
+  if (!base) base = '{{PRODUCT}}_waveform_' + fileStamp();
   return /\.png$/i.test(base) ? base : base + '.png';
 }
 

@@ -1,0 +1,5 @@
+{
+  "name": "B360",
+  "blurb": "terminal and waveform viewer",
+  "panels": ["waveform"]
+}

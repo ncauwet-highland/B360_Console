@@ -1,4 +1,4 @@
-# Windows version resource for b360_console.exe, consumed by PyInstaller's
+# Windows version resource for {{EXE}}.exe, consumed by PyInstaller's
 # --version-file.
 #
 # This is not cosmetic. An executable with blank Properties -> Details is exactly
@@ -23,12 +23,12 @@ VSVersionInfo(
       StringTable(
         '040904B0',      # US English, Unicode
         [StringStruct('CompanyName', 'Highland Technology'),
-         StringStruct('FileDescription', 'B360 Console - terminal and waveform viewer'),
+         StringStruct('FileDescription', '{{PRODUCT}} Console - {{BLURB}}'),
          StringStruct('FileVersion', '1.0.0.0'),
-         StringStruct('InternalName', 'b360_console'),
+         StringStruct('InternalName', '{{EXE}}'),
          StringStruct('LegalCopyright', 'Copyright (c) Highland Technology, Inc.'),
-         StringStruct('OriginalFilename', 'b360_console.exe'),
-         StringStruct('ProductName', 'B360 Console'),
+         StringStruct('OriginalFilename', '{{EXE}}.exe'),
+         StringStruct('ProductName', '{{PRODUCT}} Console'),
          StringStruct('ProductVersion', '1.0.0.0')])
     ]),
     VarFileInfo([VarStruct('Translation', [0x0409, 1200])])

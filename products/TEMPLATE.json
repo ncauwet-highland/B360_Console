@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "Copy this to <name-in-lowercase>.json and fill in the three fields.",
+    "Then build it:  build_console_exe.bat <NAME>",
+    "",
+    "name   the product as the operator sees it. Everything else is derived:",
+    "       the exe (<lowercase>_console.exe), the window titles, the captures",
+    "       folder (Documents\\<name> captures) and the capture file prefix.",
+    "blurb  one short phrase for the exe's Properties -> Details description.",
+    "panels optional GUI windows beyond the terminal. [] is terminal-only.",
+    "       Known ids live in PANELS in b360_console_app.py; today that is",
+    "       \"waveform\". A panel that SETS things on the device rather than",
+    "       displaying a query must declare writes:true there and echo what it",
+    "       sends into the activity log."
+  ],
+  "name": "B560",
+  "blurb": "terminal",
+  "panels": []
+}

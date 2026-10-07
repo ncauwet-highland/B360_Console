@@ -146,9 +146,15 @@ def wait_done(board, poll_timeout, progress=None, echo=None):
                        % (poll_timeout, last or "none"))
 
 
+#: Product name in the CSV banner and the default filename. A parameter rather
+#: than an import: this module is also a standalone CLI whose only dependency is
+#: b360_link, and the application's product resolver would be a circular import.
+DEFAULT_PRODUCT = "B360"
+
+
 def capture(board, rate_hz=None, channel=None, start=0, count=WAVE_DEPTH,
             window=DEFAULT_WINDOW, retries=2, progress=None, metadata=True,
-            echo=None):
+            echo=None, product=DEFAULT_PRODUCT):
     """Run a full capture and return CSV text.
 
     `rate_hz` and `channel` are optional: leave them out to capture with
@@ -225,7 +231,7 @@ def capture(board, rate_hz=None, channel=None, start=0, count=WAVE_DEPTH,
 
     out = []
     if metadata:
-        out.append("# B360 waveform capture")
+        out.append("# %s waveform capture" % product)
         out.append("# source: %s" % board.name)
         out.append("# sample_rate_hz: %g" % rate_val)
         if channel is not None:
@@ -242,8 +248,9 @@ def capture(board, rate_hz=None, channel=None, start=0, count=WAVE_DEPTH,
     return "\n".join(out) + "\n"
 
 
-def default_name():
-    return "b360_capture_%s.csv" % datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+def default_name(product=DEFAULT_PRODUCT):
+    return "%s_capture_%s.csv" % (product.lower(),
+                                  datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
 
 
 def main(argv=None):

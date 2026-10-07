@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>B360 Console</title>
+<title>{{PRODUCT}} Console</title>
 <!--
-  Terminal page for the B360 console application.
+  Terminal page for the {{PRODUCT}} console application.
 
   Line-oriented on purpose. The device never emits an escape sequence and does
   not echo -- loopback.c says so and tells clients to use local echo -- so a
@@ -108,13 +108,13 @@ footer{flex:none;display:flex;gap:8px;align-items:center;padding:8px 12px;
 <body>
 
 <header>
-  <h1>B360 Console</h1>
+  <h1>{{PRODUCT}} Console</h1>
   <select id="kind">
     <option value="tcp">TCP</option>
     <option value="serial">USB serial</option>
   </select>
   <span id="tcpfields">
-    <input type="text" id="host" placeholder="192.168.0.25 or B360-1234.local">
+    <input type="text" id="host" placeholder="192.168.0.25 or {{PRODUCT}}-1234.local">
     <input type="number" id="port" value="5007" title="TCP command port (5007)">
   </span>
   <span id="serialfields" hidden>
@@ -147,14 +147,14 @@ footer{flex:none;display:flex;gap:8px;align-items:center;padding:8px 12px;
          placeholder="connect first">
   <button id="send" disabled>Send</button>
 </footer>
-<div class="barrow">
+<div class="barrow" id="capbar">
   <span>Captures:</span><span id="capdirc">&mdash;</span>
   <button id="capdirbtn">Change folder&hellip;</button>
   <label><input type="checkbox" id="capauto" checked> auto-save</label>
 </div>
 <div class="barrow">Up/Down for history &middot; Enter alone asks the board what it is
-  &middot; several commands per line separated by <code>;</code>
-  &middot; a <code>WR</code> reply can be plotted from the scrollback</div>
+  &middot; several commands per line separated by <code>;</code><span id="wfhint">
+  &middot; a <code>WR</code> reply can be plotted from the scrollback</span></div>
 
 <div id="ctx">
   <button data-act="copy">Copy</button>
@@ -166,6 +166,12 @@ footer{flex:none;display:flex;gap:8px;align-items:center;padding:8px 12px;
 
 var $ = function(id){ return document.getElementById(id); };
 var term = $('term');
+
+/* Optional GUI panels this product was built with; the host tells us in
+   get_defaults(). Empty means terminal only, and the elements those panels own
+   are removed rather than left to fail. */
+var panelsOn = [];
+function hasPanel(id){ return panelsOn.indexOf(id) >= 0; }
 
 var connected = false;
 var busy = false;
@@ -248,7 +254,7 @@ function setConnected(on, label){
 /* -------------------------------------------------------------- api bridge --- */
 
 var BRIDGE_MSG = 'a web browser cannot open a TCP or serial connection \u2014 '
-               + 'run B360_console.exe';
+               + 'run {{BINARY}}';
 
 /* Inside the app this is the real bridge. Opened as a file in a browser there
    is none, so hand back a stand-in whose every call rejects. Each call site
@@ -430,9 +436,13 @@ function submit(){
     if (body) writeLine(body);
 
     /* Typed waveform commands get the same treatment as the Capture button:
-       the rows are saved with metadata, not just offered for plotting. */
-    var rows = extractCsv(body);
-    if (rows.length >= 2) keepCapture(rows, line);
+       the rows are saved with metadata, not just offered for plotting. Only
+       where there is a viewer -- without waveform acquisition a reply that
+       happens to hold three numbers is just text. */
+    if (hasPanel('waveform')){
+      var rows = extractCsv(body);
+      if (rows.length >= 2) keepCapture(rows, line);
+    }
   }).catch(function(e){ setBusy(false); fail('send failed', e); });
 }
 
@@ -646,12 +656,23 @@ function browserMode(){
   writeLine('A browser cannot open a TCP or serial connection, so the terminal '
           + 'cannot reach the board from here. Connecting would stall, so the '
           + 'controls are disabled.', 'note');
-  writeLine('For the terminal and one-click capture, run B360_console.exe.',
-            'note');
-  writeLine('To stay entirely in the browser: run wc/wg/ws/wr in whatever '
-          + 'terminal is approved on your machine, then open '
-          + 'b360_wave_viewer.html and paste or drop the CSV. That page needs '
-          + 'no connection and nothing installed.', 'note');
+  writeLine('For the terminal' + (hasPanel('waveform') ? ' and one-click capture'
+            : '') + ', run {{BINARY}}.', 'note');
+  if (hasPanel('waveform'))
+    writeLine('To stay entirely in the browser: run wc/wg/ws/wr in whatever '
+            + 'terminal is approved on your machine, then open '
+            + 'b360_wave_viewer.html and paste or drop the CSV. That page needs '
+            + 'no connection and nothing installed.', 'note');
+}
+
+/** Hide what an absent panel owns. Done once, from the host's answer. */
+function applyPanels(list){
+  panelsOn = list || [];
+  var owned = {waveform: ['plotwin', 'capbar', 'wfhint']};
+  Object.keys(owned).forEach(function(id){
+    if (hasPanel(id)) return;
+    owned[id].forEach(function(el){ if ($(el)) $(el).hidden = true; });
+  });
 }
 
 function boot(){
@@ -662,6 +683,7 @@ function boot(){
     setConnected(false);
   }
   api().get_defaults({}).then(function(d){
+    if (d.panels) applyPanels(d.panels);
     if (d.theme) setTheme(d.theme);
     if (d.save_dir) $('capdirc').textContent = d.save_dir;
     if (d.autosave !== undefined) $('capauto').checked = d.autosave !== false;
@@ -672,11 +694,11 @@ function boot(){
     if (d.eol_serial) eolDefaults.serial = d.eol_serial;
     if (d.eol) { $('eol').value = d.eol; eolPinned = true; }
     if (d.kind) { $('kind').value = d.kind; $('kind').onchange(); }
-    writeLine('B360 console ready. Connect to begin.', 'note');
+    writeLine('{{PRODUCT}} console ready. Connect to begin.', 'note');
     writeLine('The board allows one connection at a time — close PuTTY or '
             + 'TeraTerm first.', 'note');
   }).catch(function(){
-    writeLine('B360 console ready. Connect to begin.', 'note');
+    writeLine('{{PRODUCT}} console ready. Connect to begin.', 'note');
   });
 }
 

@@ -1,3 +1,7 @@
 build/
 build/b360_console/
 __pycache__/
+*.spec
+gen/
+dist/*.AppImage
+dist/*.AppImage.sha256

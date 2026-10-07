@@ -1,5 +1,5 @@
 ================================================================================
- tools/B360_Console -- the B360 console and its capture tools
+ B360_Console -- the console application and its capture tools
 ================================================================================
 
 Everything here runs on a PC, not on the board: a terminal plus a waveform
@@ -21,7 +21,13 @@ User-facing documentation:
  THE B360 CONSOLE
 --------------------------------------------------------------------------------
 
-Build with:   build_b360_console_exe.bat      ->  dist/b360_console.exe
+Build with:   build_console_exe.bat [PRODUCT]  ->  dist/<product>_console.exe
+              no argument builds B360; "build_console_exe.bat B960" builds the
+              terminal-only B960. See PRODUCTS below.
+
+     Linux:   ./build_console_appimage.sh [PRODUCT]
+                                  ->  dist/<product>_console.AppImage
+              Same products, same generator. See LINUX below.
 
 Source, in dependency order (lower items depend on higher ones):
 
@@ -62,13 +68,13 @@ Source, in dependency order (lower items depend on higher ones):
       a browser cannot open a socket. Plot is hand-written canvas; no charting
       library, so the file stays self-contained and auditable.
 
-  b360_console.ico
-  b360_console.version.txt
+  console.ico
+  version.txt.in
       Icon and Windows version resource. The version resource is not cosmetic:
       a binary with blank Properties -> Details is what an unidentified file
       looks like.
 
-  build_b360_console_exe.bat
+  build_console_exe.bat
       Creates a throwaway venv in %TEMP% (your system Python is untouched),
       builds the one-file executable, runs its self-test, and writes the
       SHA-256 sidecar. Uses pushd, not cd, so it works from a \\wsl.localhost
@@ -175,3 +181,87 @@ Not part of the console, and not maintained alongside it:
 House style for anything new here: '#!/usr/bin/env python3', a prose module
 docstring reused as the argparse epilog, long-form flags only, no logging
 module, sys.exit(2) for usage and connection errors.
+
+
+ PRODUCTS
+==========
+
+One source tree builds a console for several products. The product name is a
+build argument, and everything the operator can see is derived from it:
+
+    build_console_exe.bat          ->  dist\b360_console.exe   (terminal + viewer)
+    build_console_exe.bat B960     ->  dist\b960_console.exe   (terminal only)
+
+  products\<name>.json  three fields: "name", "blurb" (the exe's Properties ->
+                        Details description) and "panels". Copy TEMPLATE.json to
+                        add one. An unknown name fails the build rather than
+                        quietly producing the default.
+
+  product.py            resolves the active product and derives the rest: the
+                        exe name, window titles, Documents\<name> captures, the
+                        <name>_capture_<stamp>.csv prefix and the PNG fallback
+                        name. Stdlib only, so b360_capture.py can stay a
+                        standalone CLI with no dependency on the application.
+
+Identifiers are NOT derived. Module names, page filenames and the JS bridge
+names (b360_event, b360_link_state, window.B360_PRELOAD) are a Python<->HTML
+contract, not branding, and keep their b360_ prefix whatever the product.
+
+The pages carry {{PRODUCT}}, {{EXE}} and {{BINARY}} tokens ({{BINARY}} is the
+file the operator runs: <exe>.exe on Windows, <exe>.AppImage elsewhere), substituted in read_asset() --
+the one place a page is loaded. --selftest fails if any token survives.
+
+  PANELS -- optional GUI windows beyond the terminal, listed in PANELS in
+  b360_console_app.py and selected per product. "waveform" is the only one
+  today; a product without it gets no Waveform button, no Captures row, no
+  plot offer on a WR reply, and the viewer page is left out of the bundle.
+  Its Api methods refuse instead of half-working.
+
+  A future panel that SETS things on the device rather than showing the result
+  of a query must declare writes:true in PANELS and echo every command it sends
+  into the activity log, the way Api.capture()'s echo()/flush() pair does. The
+  board's front panel indicates received commands, so a command the operator
+  did not type must still be visible to them.
+
+Run from source with a product:  python b360_console_app.py --product B960
+
+
+--------------------------------------------------------------------------------
+ LINUX
+--------------------------------------------------------------------------------
+
+    ./build_console_appimage.sh          ->  dist/b360_console.AppImage
+    ./build_console_appimage.sh B960     ->  dist/b960_console.AppImage
+
+The AppImage is the Linux counterpart of the .exe: one file, nothing to
+install. Copy it over, chmod +x, run it. The same --selftest and --smoke flags
+work on it.
+
+  Build machine:  Python 3.9+ with venv (sudo apt install python3-venv) and
+                  curl. The venv and appimagetool are cached in
+                  ~/.cache/b360_console_build. Works under WSL; FUSE is not
+                  needed to build.
+
+  Build on the OLDEST distribution it must run on. An AppImage needs a glibc
+  at least as new as the build machine's: built on Ubuntu 24.04 it runs on
+  24.04 and later, not on 22.04.
+
+  The window is Qt WebEngine (pywebview's "qt" backend), not GTK/WebKit:
+  WebKitGTK comes from the distribution and cannot be bundled reliably, while
+  Qt WebEngine comes from pip and bundles whole. That is why the AppImage is
+  ~160 MB against the .exe's 15 MB -- Windows supplies WebView2, Linux supplies
+  nothing. Too large for a normal git file (GitHub refuses >100 MB), so
+  dist/*.AppImage is ignored; distribute it with its .sha256 instead.
+
+  AppRun sets QTWEBENGINE_DISABLE_SANDBOX=1. Ubuntu 23.10+ denies the user
+  namespaces Chromium's sandbox needs to any program without an AppArmor
+  profile, which includes every AppImage, and the window would come up blank.
+  The only pages loaded are the application's own, from inside the bundle.
+
+  Target machine:
+    - The AppImage mounts itself with FUSE. appimagetool's current runtime is
+      static and needs only fusermount (the fuse3 package, present on a stock
+      Ubuntu desktop) -- not libfuse2. Without FUSE at all (some containers),
+      run it with --appimage-extract-and-run.
+    - USB serial ports are /dev/ttyACM* or /dev/ttyUSB*, and opening them needs
+      the dialout group: sudo usermod -aG dialout $USER, then log out and in.
