@@ -5,3 +5,4 @@ __pycache__/
 gen/
 dist/*.AppImage
 dist/*.AppImage.sha256
+dist/*

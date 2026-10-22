@@ -25,6 +25,7 @@ Transports: TCP needs nothing but the standard library. Serial needs pyserial,
 imported lazily so that its absence never breaks the TCP path.
 """
 
+import re
 import socket
 import select
 import threading
@@ -65,6 +66,10 @@ REPLY_END = b"; \r\n"
 #: removed before the line ending is appended -- see command().
 CMD_DELIMS = " \t;:"
 
+#: Margin added on top of a line's WA/WU waits before the idle gap may end the
+#: read, covering the commands either side of the wait and the link latency.
+WAIT_MARGIN_S = 0.5
+
 EOL_CHOICES = {"crlf": "\r\n", "cr": "\r", "lf": "\n"}
 DEFAULT_EOL_TCP = "crlf"
 DEFAULT_EOL_SERIAL = "cr"
@@ -73,6 +78,27 @@ DEFAULT_EOL_SERIAL = "cr"
 def eol_bytes(name):
     """Map an --eol name to the characters it sends. Unknown names fall back."""
     return EOL_CHOICES.get(str(name).lower().strip(), EOL_CHOICES["crlf"])
+
+
+_WAIT_RE = re.compile(r"^W([AU])\s+([+-]?\d+)", re.IGNORECASE)
+
+
+def line_wait_s(line):
+    """Total seconds a line's WA (ms) / WU (us) commands hold the board silent.
+
+    The firmware runs them as a blocking sleep_ms()/sleep_us() between the
+    replies of the commands around them (custom_cmd.c, case 'W'), so a read that
+    ends on the short idle gap returns mid-line and the tail is lost to the next
+    command's drain(). Values are read the way atoi() reads them: leading digits
+    only. Negative values are ignored rather than modelled.
+    """
+    delims = ";" if "mac" in line.lower() else ";:"
+    total = 0.0
+    for tok in re.split("[%s]" % re.escape(delims), line):
+        m = _WAIT_RE.match(tok.strip())
+        if m and int(m.group(2)) > 0:
+            total += int(m.group(2)) / (1e3 if m.group(1).upper() == "A" else 1e6)
+    return total
 
 
 class LinkError(Exception):
@@ -349,10 +375,18 @@ class Board:
         the line at the '\\r' and never stores it (helper_funcs.c:1731-1742), so
         the trailing ';' is just a trailing delimiter and strtok_r skips it.
         Typing the ';' or leaving it off now behaves the same on both links.
+
+        A line carrying WA/WU waits extends both the idle gap and the timeout by
+        the total wait (see line_wait_s()), so "AN 0; WA 10000; AN" is read to
+        the end instead of returning after "OK; ".
         """
         if self.closed:
             raise LinkError("link is closed")
         line = line.rstrip(CMD_DELIMS)
+        wait = line_wait_s(line)
+        if wait > 0:
+            idle_gap += wait + WAIT_MARGIN_S
+            timeout += wait + WAIT_MARGIN_S
         with self._lock:
             self.transport.drain()
             self.transport.write((line + self.eol).encode("ascii", "replace"))
