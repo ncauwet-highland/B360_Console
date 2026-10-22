@@ -14,7 +14,6 @@ scripts.
 User-facing documentation:
   ../docs/B360_console_Quickstart.docx   how to use it
   ../docs/b360_console.docx              how it works and why
-  b360_console_plan.md                 the design plan it was built from
 
 
 --------------------------------------------------------------------------------
