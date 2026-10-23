@@ -31,6 +31,11 @@ TOK_PRODUCT = "{{PRODUCT}}"
 TOK_EXE = "{{EXE}}"
 TOK_BINARY = "{{BINARY}}"       #< the file the operator runs, e.g. b360_console.exe
 
+#: How the operator picks the window's look. "lightdark" is the Light/Dark select;
+#: "wheel" is a colour wheel from which the page derives a whole palette, holding
+#: every text and border colour to a minimum contrast against the picked colour.
+APPEARANCES = ("lightdark", "wheel")
+
 
 def asset(name):
     """Locate a bundled file: the PyInstaller payload dir, else alongside us."""
@@ -41,10 +46,20 @@ def asset(name):
 class Product:
     """A product name plus the strings derived from it."""
 
-    def __init__(self, name, blurb="", panels=()):
+    def __init__(self, name, blurb="", panels=(), appearance=""):
         self.name = str(name).strip() or DEFAULT
         self.blurb = blurb or "terminal"
         self.panels = tuple(panels or ())
+        self.appearance = appearance or APPEARANCES[0]
+        if self.appearance not in APPEARANCES:
+            raise ValueError("unknown appearance %r for %s (known: %s)"
+                             % (appearance, self.name, ", ".join(APPEARANCES)))
+        # The wheel derives the terminal's palette only. The waveform window has
+        # its own (including 14 canvas colours) that nothing derives yet, so the
+        # pair would give a custom terminal beside a stock Light/Dark plot.
+        if self.appearance == "wheel" and "waveform" in self.panels:
+            raise ValueError("%s: appearance \"wheel\" does not cover the "
+                             "waveform panel yet" % self.name)
 
     # -- derived names -------------------------------------------------------
 
@@ -109,7 +124,8 @@ class Product:
                      if t in text)
 
     def __repr__(self):
-        return "Product(%r, panels=%r)" % (self.name, self.panels)
+        return ("Product(%r, panels=%r, appearance=%r)"
+                % (self.name, self.panels, self.appearance))
 
 
 def _read(path):
@@ -117,7 +133,8 @@ def _read(path):
         data = json.load(fh)
     if not isinstance(data, dict) or not data.get("name"):
         raise ValueError("%s has no \"name\"" % path)
-    return Product(data["name"], data.get("blurb", ""), data.get("panels", ()))
+    return Product(data["name"], data.get("blurb", ""), data.get("panels", ()),
+                   data.get("appearance", ""))
 
 
 def profile_path(name):

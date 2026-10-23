@@ -11,9 +11,13 @@
     "       Known ids live in PANELS in b360_console_app.py; today that is",
     "       \"waveform\". A panel that SETS things on the device rather than",
     "       displaying a query must declare writes:true there and echo what it",
-    "       sends into the activity log."
+    "       sends into the activity log.",
+    "appearance  optional. \"lightdark\" (the default) is the Light/Dark select;",
+    "       \"wheel\" is a colour wheel for the window colour. The wheel styles",
+    "       the terminal only, so do not combine it with the waveform panel."
   ],
   "name": "B560",
   "blurb": "terminal",
-  "panels": []
+  "panels": [],
+  "appearance": "lightdark"
 }

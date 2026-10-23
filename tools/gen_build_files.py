@@ -49,8 +49,11 @@ def main(argv):
 
     # The profile the exe reads back at runtime. Written from the loaded object,
     # not copied, so a malformed profile fails here rather than inside the exe.
+    # Every field, or the exe silently falls back to the default for the missing
+    # one -- a B960 built without "appearance" would come up as Light/Dark.
     with open(os.path.join(GEN, "product.json"), "w", encoding="utf-8") as fh:
-        json.dump({"name": p.name, "blurb": p.blurb, "panels": list(p.panels)},
+        json.dump({"name": p.name, "blurb": p.blurb, "panels": list(p.panels),
+                   "appearance": p.appearance},
                   fh, indent=2)
         fh.write("\n")
 
@@ -81,6 +84,7 @@ def main(argv):
     print("product : %s" % p.name)
     print("exe     : %s" % p.exe)
     print("panels  : %s" % (", ".join(p.panels) or "none (terminal only)"))
+    print("look    : %s" % p.appearance)
     return 0
 
 

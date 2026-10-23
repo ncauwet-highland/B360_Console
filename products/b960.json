@@ -1,5 +1,6 @@
 {
   "name": "B960",
   "blurb": "terminal",
-  "panels": []
+  "panels": [],
+  "appearance": "wheel"
 }

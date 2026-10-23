@@ -24,6 +24,7 @@ Usage:
     b360_console.exe [capture.csv ...]
     b360_console.exe --selftest            # assemble and exit, no window
     b360_console.exe --smoke 4             # open, then close after 4 seconds
+    b360_console.exe --contrast-sweep      # check the colour wheel's palette
 """
 
 import base64
@@ -108,8 +109,10 @@ def settings_path():
 #: together means there is no judgement call about which key is safe to share, and
 #: a product on a different port needs no code change.
 #:
-#: Everything else (theme, activity_log, autosave, save_dir, png_dir) is shared:
-#: set the captures folder once, for every product.
+#: Everything else (theme, window_color, activity_log, autosave, save_dir, png_dir)
+#: is shared: set the captures folder once, for every product. window_color is
+#: read only by a product built with the colour wheel; the others never look at
+#: it, and remember() re-reads the file so they do not drop it either.
 PER_PRODUCT = ("kind", "host", "port", "eol")
 
 
@@ -355,6 +358,8 @@ class Api:
         return {"ok": True,
                 "product": product.P.name,
                 "panels": list(panels_on()),
+                "appearance": product.P.appearance,
+                "window_color": app.setting("window_color", ""),
                 # the connection comes from this product's own section
                 "kind": app.setting("kind", "tcp"),
                 "host": app.setting("host", ""),
@@ -696,6 +701,18 @@ class Api:
         return {"ok": True, "theme": mode}
 
     @guard
+    def set_window_color(self, opts):
+        """Remember the colour-wheel pick. The page derives everything else."""
+        if product.P.appearance != "wheel":
+            return {"ok": False,
+                    "error": "%s has no colour wheel" % product.P.title}
+        color = str(opts.get("color", "")).strip().lower()
+        if not re.match(r"^#[0-9a-f]{6}$", color):
+            return {"ok": False, "error": "not a colour: %r" % color}
+        self._app.remember(window_color=color)
+        return {"ok": True, "window_color": color}
+
+    @guard
     def set_activity_log(self, opts):
         """Remember whether the terminal shows the app's own grey lines."""
         app = self._app
@@ -999,11 +1016,13 @@ class App:
 
 def parse_flags(argv):
     """Split diagnostics off the argument list. Everything else is a CSV path."""
-    files, selftest, smoke, which = [], False, 0.0, None
+    files, selftest, smoke, which, sweep = [], False, 0.0, None, False
     it = iter(argv)
     for a in it:
         if a == "--selftest":
             selftest = True
+        elif a == "--contrast-sweep":
+            sweep = True
         elif a == "--smoke":
             smoke = float(next(it, "4"))
         elif a == "--product":
@@ -1012,7 +1031,7 @@ def parse_flags(argv):
             which = a.split("=", 1)[1]
         else:
             files.append(a)
-    return files, selftest, smoke, which
+    return files, selftest, smoke, which, sweep
 
 
 def run_selftest(payload, problems):
@@ -1046,6 +1065,7 @@ def run_selftest(payload, problems):
     on = panels_on()
     rows = [("product", product.P.name, True),
             ("panels", ", ".join(on) or "none (terminal only)", True),
+            ("appearance", product.P.appearance, True),
             ("console page", asset(CONSOLE_HTML), True),
             ("console html", ) + page_check(CONSOLE_HTML)]
 
@@ -1085,8 +1105,60 @@ def run_selftest(payload, problems):
     return 0 if all(ok for _, _, ok in rows) else 1
 
 
+def run_contrast_sweep():
+    """Run the page's own palette check in the real webview and report it.
+
+    The check lives in b360_console.html (b360_contrast_sweep) so it tests the
+    code that ships, in the engine that ships it, rather than a Python copy of
+    the maths. Needs a display; the window stays hidden.
+    """
+    import webview
+    url = write_temp(read_asset(CONSOLE_HTML), "sweep")
+    # A real bridge, only so the page boots quietly; nothing here connects.
+    win = webview.create_window("contrast sweep", url=file_url(url), hidden=True,
+                                js_api=App([]).api)
+    loaded = threading.Event()
+    win.events.loaded += loaded.set
+    result = {}
+
+    def run():
+        try:
+            if not loaded.wait(30):
+                result["error"] = "page did not load"
+                return
+            result["r"] = win.evaluate_js("b360_contrast_sweep()")
+        except Exception as exc:
+            result["error"] = "%s: %s" % (exc.__class__.__name__, exc)
+        finally:
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+    try:
+        webview.start(lambda: threading.Thread(target=run, daemon=True).start())
+    finally:
+        try:
+            os.unlink(url)
+        except OSError:
+            pass
+
+    r = result.get("r")
+    if not isinstance(r, dict):
+        out("contrast sweep: %s" % result.get("error", "no result"), err=True)
+        return 1
+    out("contrast sweep: %d colours x %d pairings" % (r["colours"], r["pairs"]))
+    for key in sorted(r["worst"]):
+        ratio, pick, need = r["worst"][key]
+        out("  %-30s worst %5.2f:1 (min %g) at %s%s"
+            % (key, ratio, need, pick, "" if ratio >= need else "   <-- FAIL"))
+    for f in r["failures"]:
+        out("FAIL " + f, err=True)
+    return 1 if r["failures"] else 0
+
+
 def main(argv):
-    args, selftest, smoke, which = parse_flags(argv[1:])
+    args, selftest, smoke, which, sweep = parse_flags(argv[1:])
     if which:
         try:
             product.use(which)
@@ -1104,6 +1176,8 @@ def main(argv):
 
     if selftest:
         return run_selftest(payload, problems)
+    if sweep:
+        return run_contrast_sweep()
 
     try:
         import webview

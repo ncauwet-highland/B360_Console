@@ -222,6 +222,24 @@ deliberate rejections that would otherwise get re-proposed.
 | **Options for sites that will not run an outside `.exe`** | Three, documented in the Quickstart: run the same program from source (`requirements.txt` pins pywebview 6.2.1 and pyserial 3.5; verified from a clean venv), `b360_capture.py` over TCP on a stdlib-only interpreter (verified in a `--without-pip` venv), or terminal plus the viewer page with nothing installed at all. Sharing the source was already the design -- the `.exe` bundles these same files rather than replacing them. **Chosen: the capture script.** It is the only one that asks for nothing at all, and the CSV it writes opens in the viewer page, which also asks for nothing. |
 | **A folder of its own** -- the console files were "mixed with other test stuff that is unrelated" | Moved to `tools/B360_Console/`, `git mv` so the history follows. The folder is self-contained: nothing outside it is imported, and the build script was already `pushd "%~dp0"`-relative, so it needed no change. Ignore rules and doc paths repointed. |
 
+## B960: colour wheel in place of Light/Dark (2026-10-22)
+
+B960 already built as a terminal-only product; this is the first feature that
+differs between products in look rather than in panels. Planned before any edit.
+
+| Asked for | Outcome |
+|---|---|
+| **"Instead of Light/Dark mode I want a color wheel where you can pick your window's color"**, B960 only | New profile field `"appearance"`: `"lightdark"` (default) or `"wheel"`. Only `b960.json` sets it. `gen_build_files.py` had to learn to write it into the bundled `product.json`, or the exe would silently come up as Light/Dark; `--selftest` now prints it. The wheel is hand-drawn on a canvas (HSV wheel + brightness slider, hex field, presets, Reset), not `<input type="color">`, which opens the OS's own dialog -- a grid on Windows, a Qt dialog on Linux. |
+| **"Must ensure everything will still be readable -- text and menu borders should color-shift to be clearly defined"** | One function, `paletteFrom()`, derives all the colour tokens from the pick, each solved by bisection on lightness to a WCAG minimum against what it sits on: 7:1 terminal text, 4.5:1 other text, 3:1 borders/dot/accent. `--contrast-sweep` checks 21 pairings over 2592 colours in the real webview; all pass. Hardcoded colours (button text, button hover, dot greys and amber, menu shadow) became tokens with their old values, so B360 renders as before. |
+| A mid-tone pick cannot meet 7:1 -- the best text on ~#777 is ~4.6:1. Offered: (A) exact chrome, shaded terminal; (B) all exact, 4.5:1; (C) forbid the band. **Chose A.** | Header and footer take the pick exactly; the terminal pane keeps the hue and moves only as far as 7:1 needs (unchanged for most picks). The picker says so when it happens. Fields share the terminal shade, which lies further from the text than the panel, so what reads on the panel reads in a field too. |
+| **Scope: B960 only** | The wheel does not derive the waveform window's palette (14 canvas colours), so `product.py` refuses wheel + waveform rather than ship a mismatched pair. |
+| Settings: shared or per product? **Shared, provided it cannot disturb products without the wheel** | `window_color` is a shared key. Current builds re-read the file and change only their own keys, so they leave it alone (tested). The first shipped B360 exe writes back its whole start-up copy: if it is open while the B960 colour changes, its next save reverts that colour. Harmless to B360; pick again. |
+
+Found only by looking at the result: a first version asked hue-clashing text for
+6:1 instead of 4.5:1. On a blue window that drove command lines into near-black
+navy next to near-black output. Text now stays at 4.5:1; a command line changes
+hue (blue to violet) and an error line, which must stay red, goes bold.
+
 ## Rejected, and why — do not re-propose without new information
 
 - **UDP for bulk transfer.** Offered as available, but `cmdETH2()` in

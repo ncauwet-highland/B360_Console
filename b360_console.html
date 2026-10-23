@@ -26,6 +26,10 @@
   --term-bg:#fdfdfe; --term-ink:#1d2126; --term-dim:#79818b;
   --t-cmd:#1b5e9e; --t-err:#c4384f;
   --t-plot-bg:#eef6ee; --t-plot-fg:#1f6b3a; --t-plot-line:#bcd8c2;
+  /* Were hardcoded; tokens so the colour wheel can solve them too. Same values
+     in both Light and Dark, as before. */
+  --on-accent:#fff; --accent-hover:#2569ad;
+  --dot-idle:#c4c9d0; --dot-busy:#e2a11d; --shadow:rgba(0,0,0,.20);
   --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
 }
 :root[data-theme="dark"]{
@@ -48,16 +52,16 @@ button,select,input{font:inherit;color:inherit;background:var(--field);
 button{cursor:pointer}
 button:hover:not(:disabled){background:var(--hover);border-color:var(--dim)}
 button:disabled{opacity:.5;cursor:default}
-button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
-button.pri:hover:not(:disabled){background:#2569ad;border-color:#2569ad}
+button.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+button.pri:hover:not(:disabled){background:var(--accent-hover);border-color:var(--accent-hover)}
 #host{width:190px}
 #port{width:74px}
 #serialport{min-width:170px}
 .spacer{flex:1}
-#dot{width:9px;height:9px;border-radius:50%;background:#c4c9d0;flex:none}
+#dot{width:9px;height:9px;border-radius:50%;background:var(--dot-idle);flex:none}
 #dot.on{background:var(--ok)}
-#dot.busy{background:#e2a11d}
-#dot.stale{background:#c4c9d0}
+#dot.busy{background:var(--dot-busy)}
+#dot.stale{background:var(--dot-idle)}
 #state{color:var(--dim);white-space:nowrap}
 #term{flex:1;min-height:0;overflow:auto;background:var(--term-bg);color:var(--term-ink);
       font:12.5px/1.5 var(--mono);padding:10px 12px;white-space:pre-wrap;
@@ -74,7 +78,7 @@ body{user-select:none}
 #term .note,
 #term .plot{user-select:none}
 #term .cmd{color:var(--t-cmd)}
-#term .err{color:var(--t-err)}
+#term .err{color:var(--t-err);font-weight:var(--t-err-weight,normal)}
 #term .note{color:var(--term-dim);font-style:italic}
 #term.quiet .note{display:none}
 #term .plot{display:inline-block;margin:4px 0;padding:2px 9px;border-radius:5px;
@@ -97,12 +101,43 @@ footer{flex:none;display:flex;gap:8px;align-items:center;padding:8px 12px;
    pywebview is in debug mode, so the page provides one. */
 #ctx{position:fixed;z-index:60;display:none;flex-direction:column;min-width:128px;
      background:var(--panel);border:1px solid var(--line);border-radius:6px;
-     padding:4px;box-shadow:0 6px 18px rgba(0,0,0,.20)}
+     padding:4px;box-shadow:0 6px 18px var(--shadow)}
 #ctx.on{display:flex}
 #ctx button{border:0;background:none;text-align:left;padding:5px 10px;
      border-radius:4px;font:inherit;color:inherit;cursor:pointer}
 #ctx button:hover:not(:disabled){background:var(--hover)}
 #ctx button:disabled{opacity:.45;cursor:default}
+
+/* ------------------------------------------------- colour wheel products ---
+   Everything below applies only with data-appearance="wheel", so a Light/Dark
+   product renders exactly as before. paletteFrom() sets the colour tokens; these
+   rules cover what the browser would otherwise colour on its own, which a
+   custom background can make unreadable. */
+#colorbtn:not([hidden]){display:inline-flex;align-items:center;gap:6px}
+#colorbtn i{width:14px;height:14px;border-radius:50%;border:1px solid var(--line);
+     background:var(--panel)}
+:root[data-appearance="wheel"] ::selection{background:var(--ink);color:var(--field)}
+:root[data-appearance="wheel"] #term ::selection{background:var(--term-ink);color:var(--term-bg)}
+:root[data-appearance="wheel"] ::placeholder{color:var(--dim);opacity:1}
+:root[data-appearance="wheel"] option{background:var(--field);color:var(--ink)}
+:root[data-appearance="wheel"] :focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+/* The dot sits in a field-coloured ring with a border round it: its fill is
+   solved against the ring, so green/amber/grey keep their hue on any window
+   colour instead of all collapsing to black or white on a mid-tone. */
+:root[data-appearance="wheel"] #dot{box-shadow:0 0 0 2px var(--field),0 0 0 3px var(--line);
+     margin:0 3px}
+#picker{position:fixed;z-index:70;display:none;flex-direction:column;gap:8px;
+     width:236px;padding:10px;background:var(--panel);color:var(--ink);
+     border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px var(--shadow)}
+#picker.on{display:flex}
+#wheel{width:214px;height:214px;align-self:center;cursor:crosshair;touch-action:none}
+#picker label{display:flex;align-items:center;gap:8px;color:var(--dim)}
+#picker input[type=range]{flex:1;padding:0;accent-color:var(--accent)}
+#hex{width:90px;font-family:var(--mono)}
+#presets{display:flex;flex-wrap:wrap;gap:6px}
+#presets button{width:22px;height:22px;padding:0;border-radius:50%;border:1px solid var(--line)}
+#picker .row{display:flex;align-items:center;gap:8px}
+#picknote{color:var(--dim);font-size:11.5px;min-height:1em}
 </style>
 </head>
 <body>
@@ -133,6 +168,7 @@ footer{flex:none;display:flex;gap:8px;align-items:center;padding:8px 12px;
     <option value="light">Light</option>
     <option value="dark">Dark</option>
   </select>
+  <button id="colorbtn" hidden title="window colour"><i></i>Colour</button>
   <button id="plotwin">Waveform window</button>
   <button id="clear">Clear</button>
   <label title="the app's own grey lines -- captures, auto-save, connection notices. Commands and board replies are never hidden."><input
@@ -155,6 +191,15 @@ footer{flex:none;display:flex;gap:8px;align-items:center;padding:8px 12px;
 <div class="barrow">Up/Down for history &middot; Enter alone asks the board what it is
   &middot; several commands per line separated by <code>;</code><span id="wfhint">
   &middot; a <code>WR</code> reply can be plotted from the scrollback</span></div>
+
+<div id="picker" role="dialog" aria-label="window colour">
+  <canvas id="wheel" width="214" height="214"></canvas>
+  <label>Brightness <input type="range" id="bright" min="0" max="100" value="100"></label>
+  <div class="row"><input type="text" id="hex" maxlength="7" spellcheck="false">
+    <span class="spacer"></span><button id="colreset">Reset</button></div>
+  <div id="presets"></div>
+  <div id="picknote"></div>
+</div>
 
 <div id="ctx">
   <button data-act="copy">Copy</button>
@@ -266,7 +311,7 @@ function api(){
   if (!bridgeStub){
     bridgeStub = {};
     ['get_defaults', 'list_serial', 'connect', 'disconnect', 'send', 'set_eol',
-     'set_theme', 'capture', 'save_capture', 'plot_text', 'show_plot',
+     'set_theme', 'set_window_color', 'capture', 'save_capture', 'plot_text', 'show_plot',
      'save_csv', 'choose_save_dir', 'set_autosave',
      'set_activity_log'].forEach(function(m){
       bridgeStub[m] = function(){ return Promise.reject(new Error(BRIDGE_MSG)); };
@@ -288,6 +333,402 @@ function setTheme(mode){
   $('theme').value = (mode === 'dark') ? 'dark' : 'light';
 }
 window.b360_set_theme = setTheme;
+
+/* ---------------------------------------------------------- colour wheel --- */
+
+/* Products built with appearance "wheel" replace Light/Dark with a picked
+   window colour. Every other colour is DERIVED from it, and each one is solved
+   to a minimum WCAG contrast against what it sits on:
+
+     text in the terminal           7:1
+     any other text                 4.5:1  (incl. dim text, commands, errors)
+     borders, status dot, accent    3:1
+
+   The header and footer take the picked colour exactly. Text on a mid-tone
+   (around #777) cannot reach 7:1 in either black or white -- the ceiling there
+   is about 4.6:1 -- so the terminal pane takes the same hue, moved lighter or
+   darker only as far as 7:1 needs. For most colours it is not moved at all.
+
+   b360_contrast_sweep() runs the CONTRAST table over ~2600 colours; the host
+   calls it for --contrast-sweep. */
+
+var DEFAULT_WINDOW = '#ffffff';
+var DARK_WINDOW = '#1c2128';    /* used once, for someone whose shared theme is Dark */
+
+function clamp01(x){ return x < 0 ? 0 : x > 1 ? 1 : x; }
+
+function hexToRgb(hex){
+  var n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function rgbToHex(c){
+  return '#' + c.map(function(v){
+    return ('0' + Math.round(v).toString(16)).slice(-2);
+  }).join('');
+}
+
+/** h in degrees, s and l 0..1; returns a hex string. */
+function hsl(h, s, l){
+  var a = s * Math.min(l, 1 - l);
+  function f(n){
+    var k = (n + h / 30) % 12;
+    return 255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)));
+  }
+  return rgbToHex([f(0), f(8), f(4)]);
+}
+
+function rgbToHsl(c){
+  var r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+  var max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  var h = 0, l = (max + min) / 2;
+  var s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  if (d){
+    if (max === r) h = 60 * (((g - b) / d) % 6);
+    else if (max === g) h = 60 * ((b - r) / d + 2);
+    else h = 60 * ((r - g) / d + 4);
+  }
+  return [(h + 360) % 360, s, l];
+}
+
+/** The wheel is HSV (hue round, saturation out, brightness on the slider). */
+function hsv(h, s, v){
+  function f(n){
+    var k = (n + h / 60) % 6;
+    return 255 * (v - v * s * Math.max(0, Math.min(k, 4 - k, 1)));
+  }
+  return rgbToHex([f(5), f(3), f(1)]);
+}
+
+function rgbToHsv(c){
+  var r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+  var max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+  return [rgbToHsl(c)[0], max ? d / max : 0, max];
+}
+
+/** WCAG 2 relative luminance. */
+function lum(hex){
+  var c = hexToRgb(hex).map(function(v){
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+
+function contrast(a, b){
+  var x = lum(a), y = lum(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
+function hueDist(a, b){
+  var d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+/**
+ * The colour of hue h and saturation s nearest lightness l0 that reaches
+ * `target` against `bg`, on the side given by `dark` (true: darker than bg).
+ *
+ * Contrast only grows moving away from bg on one side, so a bisection between
+ * l0 and the extreme finds the closest passing lightness. The extreme is pure
+ * black or white whatever h and s are, which is the best there is, so it is
+ * returned when nothing nearer passes. The small margin keeps a result rounded
+ * to whole RGB steps above the line.
+ */
+function solve(h, s, l0, bg, target, dark){
+  var lb = lum(bg);
+  function ok(c){
+    var y = lum(c);
+    return (dark ? y <= lb : y >= lb) && contrast(c, bg) >= target + 0.02;
+  }
+  var c = hsl(h, s, l0);
+  if (ok(c)) return c;
+  var lo = l0, hi = dark ? 0 : 1, i;
+  for (i = 0; i < 24; i++){
+    var mid = (lo + hi) / 2;
+    if (ok(hsl(h, s, mid))) hi = mid; else lo = mid;
+  }
+  return hsl(h, s, hi);
+}
+
+/** Black or white, whichever reads better on bg. */
+function bestMono(bg){
+  return contrast('#000000', bg) >= contrast('#ffffff', bg) ? '#000000' : '#ffffff';
+}
+
+/** sRGB mix; each channel lies between the two, so luminance does too. */
+function mix(a, b, t){
+  var x = hexToRgb(a), y = hexToRgb(b);
+  return rgbToHex(x.map(function(v, i){ return v + (y[i] - v) * t; }));
+}
+
+/** Move a colour's lightness by d (clamped), keeping hue and saturation. */
+function shift(hex, d){
+  var q = rgbToHsl(hexToRgb(hex));
+  return hsl(q[0], q[1], clamp01(q[2] + d));
+}
+
+/**
+ * Derive the whole palette from one colour. Returns {tokens, scheme, shaded}:
+ * the CSS custom properties, the color-scheme for native widgets (scrollbars,
+ * drop-downs), and whether the terminal pane had to be moved off the picked
+ * colour to keep its text at 7:1.
+ */
+function paletteFrom(pick){
+  var q = rgbToHsl(hexToRgb(pick)), h = q[0], s = q[1];
+  var dark = bestMono(pick) === '#000000';      /* dark TEXT, i.e. a light window */
+  var away = dark ? 1 : -1;                     /* lightness direction away from text */
+  var tint = Math.min(s, 0.25);
+  var lText = dark ? 0.13 : 0.93;               /* starting lightness for text */
+  var lMid  = dark ? 0.38 : 0.72;               /* ... for coloured text */
+  var tinted = hsl(h, tint, lText);
+
+  /* A colour near the picked hue can only be told apart by lightness. For a
+     mark that is solved harder (the Connect button, a status dot). Text is not:
+     4.5:1 already separates it from the window, and pushing harder only drives
+     it into the plain text colour -- tried, and commands on a blue window came
+     out navy next to near-black output. Instead a command line moves to another
+     hue, and an error line, which must stay red, goes bold. */
+  var clash = function(hue){ return s > 0.25 && hueDist(hue, h) < 35; };
+  function need(hue, base){ return clash(hue) ? Math.max(base, 4.5) : base; }
+  var cmdHue = clash(210) ? 270 : 210;
+
+  var panel = pick;
+
+  /* The terminal pane: the picked colour, moved away from the text only as far
+     as 7.5:1 needs. The extra half leaves room for the coloured text below. */
+  var termBg = pick, i;
+  if (contrast(tinted, termBg) < 7.6){
+    termBg = solve(h, s, q[2], tinted, 7.5, !dark);
+  }
+  /* Inputs and buttons share it. It lies further from the text than the panel
+     does, so whatever reads on the panel reads at least as well in a field. */
+  var field = termBg;
+  var bg = mix(panel, field, 0.5);
+
+  var ink = solve(h, tint, lText, panel, 7, dark);
+  var dim = solve(h, Math.min(s, 0.12), lMid, panel, 4.5, dark);
+  /* 3:1 is the WCAG minimum for a boundary; on a pale window that is a good
+     deal firmer than the stock grey, which is the point. */
+  var line = solve(h, Math.min(s, 0.2), dark ? 0.75 : 0.35, panel, 3, dark);
+
+  var hover = shift(field, -away * 0.06);
+  if (contrast(ink, hover) < 4.6) hover = shift(field, away * 0.06);
+
+  var accent = solve(212, 0.65, dark ? 0.45 : 0.6, panel, need(212, 3), dark);
+  var onAccent = bestMono(accent);
+  var accentHover = shift(accent, onAccent === '#ffffff' ? -0.07 : 0.07);
+
+  var termInk = solve(h, tint, lText, termBg, 7, dark);
+  var termDim = solve(h, Math.min(s, 0.12), lMid, termBg, 4.5, dark);
+  var tCmd = solve(cmdHue, 0.75, lMid, termBg, 4.5, dark);
+  var tErr = solve(352, 0.72, lMid, termBg, 4.5, dark);
+
+  var plotBg = shift(termBg, -away * 0.06);
+  var plotFg = solve(140, 0.5, lMid, plotBg, 4.5, dark);
+  var plotLine = solve(140, 0.3, dark ? 0.7 : 0.4, termBg, 3, dark);
+
+  /* Status-dot fills, against the field-coloured ring they sit in. */
+  var dotL = dark ? 0.45 : 0.6;
+  var ok = solve(140, 0.6, dotL, field, need(140, 3), dark);
+  var busyDot = solve(40, 0.85, dotL, field, need(40, 3), dark);
+  var idle = solve(h, Math.min(s, 0.1), dark ? 0.7 : 0.4, field, 3, dark);
+
+  return {
+    scheme: dark ? 'light' : 'dark',
+    shaded: termBg !== pick,
+    tokens: {
+      '--bg': bg, '--panel': panel, '--ink': ink, '--dim': dim, '--line': line,
+      '--accent': accent, '--ok': ok, '--err': tErr, '--field': field,
+      '--hover': hover, '--term-bg': termBg, '--term-ink': termInk,
+      '--term-dim': termDim, '--t-cmd': tCmd, '--t-err': tErr,
+      '--t-plot-bg': plotBg, '--t-plot-fg': plotFg, '--t-plot-line': plotLine,
+      '--on-accent': onAccent, '--accent-hover': accentHover,
+      '--dot-idle': idle, '--dot-busy': busyDot,
+      '--t-err-weight': clash(352) ? '700' : '400',
+      '--shadow': dark ? 'rgba(0,0,0,.22)' : 'rgba(0,0,0,.55)'
+    }
+  };
+}
+
+/* Every pairing the page actually draws: [text-or-mark, what it sits on, min]. */
+var CONTRAST = [
+  ['--ink', '--panel', 4.5],     /* 7 where possible; a mid-tone tops out ~4.6 */
+  ['--ink', '--field', 4.5], ['--ink', '--hover', 4.5], ['--ink', '--bg', 4.5],
+  ['--dim', '--panel', 4.5], ['--dim', '--field', 4.5], ['--dim', '--bg', 4.5],
+  ['--line', '--panel', 3], ['--line', '--field', 3],
+  ['--accent', '--panel', 3],
+  ['--on-accent', '--accent', 4.5], ['--on-accent', '--accent-hover', 4.5],
+  ['--term-ink', '--term-bg', 7],
+  ['--term-dim', '--term-bg', 4.5], ['--t-cmd', '--term-bg', 4.5],
+  ['--t-err', '--term-bg', 4.5],
+  ['--t-plot-fg', '--t-plot-bg', 4.5], ['--t-plot-line', '--term-bg', 3],
+  ['--ok', '--field', 3], ['--dot-busy', '--field', 3], ['--dot-idle', '--field', 3]
+];
+
+/** Check paletteFrom() over the whole wheel. Returns a plain object for the host. */
+window.b360_contrast_sweep = function(){
+  var fails = [], worst = {}, n = 0, h, si, vi;
+  for (h = 0; h < 360; h += 10)
+    for (si = 0; si <= 5; si++)
+      for (vi = 0; vi <= 11; vi++){
+        var pick = hsv(h, si / 5, vi / 11), t = paletteFrom(pick).tokens;
+        n++;
+        CONTRAST.forEach(function(c){
+          var r = contrast(t[c[0]], t[c[1]]), key = c[0] + ' on ' + c[1];
+          if (!(key in worst) || r < worst[key][0]) worst[key] = [r, pick, c[2]];
+          if (r < c[2] && fails.length < 40)
+            fails.push(pick + ': ' + key + ' ' + r.toFixed(2) + ' < ' + c[2]);
+        });
+      }
+  return {colours: n, pairs: CONTRAST.length, failures: fails, worst: worst};
+};
+
+var windowColor = DEFAULT_WINDOW;
+
+function applyWindowColor(pick){
+  var p = paletteFrom(pick), root = document.documentElement;
+  windowColor = pick;
+  Object.keys(p.tokens).forEach(function(k){ root.style.setProperty(k, p.tokens[k]); });
+  root.style.colorScheme = p.scheme;
+  $('picknote').textContent = p.shaded
+    ? 'Terminal shaded to keep its text at 7:1.' : '';
+  return p;
+}
+
+/** Switch the page to wheel mode. Called once, from the host's answer. */
+function applyAppearance(mode, saved, theme){
+  if (mode !== 'wheel') return;
+  document.documentElement.setAttribute('data-appearance', 'wheel');
+  document.documentElement.removeAttribute('data-theme');
+  $('theme').hidden = true;
+  $('colorbtn').hidden = false;
+  var pick = /^#[0-9a-f]{6}$/i.test(saved || '') ? saved.toLowerCase()
+           : (theme === 'dark' ? DARK_WINDOW : DEFAULT_WINDOW);
+  applyWindowColor(pick);
+  pickerFrom(pick);
+}
+
+/* -- the picker -- */
+
+var wheel = $('wheel'), wctx = wheel.getContext('2d');
+var pickHsv = [0, 0, 1];
+
+var PRESETS = ['#ffffff', '#f3ead3', '#dbe9f4', '#2f5d8a', '#3c6e47',
+               '#7a2e3a', '#777777', '#1c2128'];
+
+function drawWheel(){
+  var w = wheel.width, r = w / 2, img = wctx.createImageData(w, w), d = img.data;
+  var x, y, k = 0;
+  for (y = 0; y < w; y++)
+    for (x = 0; x < w; x++, k += 4){
+      var dx = x - r + 0.5, dy = y - r + 0.5, dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > r){ d[k + 3] = 0; continue; }
+      var c = hexToRgb(hsv((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360,
+                           dist / r, pickHsv[2]));
+      d[k] = c[0]; d[k + 1] = c[1]; d[k + 2] = c[2];
+      d[k + 3] = dist > r - 1 ? 255 * (r - dist) : 255;   /* soft edge */
+    }
+  wctx.putImageData(img, 0, 0);
+  /* The marker is a black ring inside a white one, so it shows on any hue. */
+  var a = pickHsv[0] * Math.PI / 180, mr = pickHsv[1] * (r - 1);
+  var mx = r + Math.cos(a) * mr, my = r + Math.sin(a) * mr;
+  wctx.lineWidth = 2;
+  wctx.strokeStyle = '#fff';
+  wctx.beginPath(); wctx.arc(mx, my, 7, 0, 2 * Math.PI); wctx.stroke();
+  wctx.strokeStyle = '#000';
+  wctx.beginPath(); wctx.arc(mx, my, 5, 0, 2 * Math.PI); wctx.stroke();
+}
+
+/** Point the controls at a colour without applying or saving it. */
+function pickerFrom(hex){
+  pickHsv = rgbToHsv(hexToRgb(hex));
+  $('bright').value = Math.round(pickHsv[2] * 100);
+  $('hex').value = hex;
+  drawWheel();
+}
+
+/** Apply from the wheel/slider; `save` only when the gesture ends. */
+function pickNow(save){
+  var hex = hsv(pickHsv[0], pickHsv[1], pickHsv[2]);
+  $('hex').value = hex;
+  drawWheel();
+  applyWindowColor(hex);
+  if (save) saveWindowColor(hex);
+}
+
+function saveWindowColor(hex){
+  api().set_window_color({color: hex})['catch'](function(){
+    /* no host (browser preview): the colour still applies, it just is not kept */
+  });
+}
+
+function setFromHex(hex, save){
+  pickerFrom(hex);
+  applyWindowColor(hex);
+  if (save) saveWindowColor(hex);
+}
+
+function wheelAt(e){
+  var b = wheel.getBoundingClientRect(), r = b.width / 2;
+  var dx = e.clientX - b.left - r, dy = e.clientY - b.top - r;
+  pickHsv[0] = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  pickHsv[1] = Math.min(1, Math.sqrt(dx * dx + dy * dy) / r);
+  /* Choosing a hue at zero brightness would change nothing visible. */
+  if (pickHsv[2] < 0.05){ pickHsv[2] = 0.5; $('bright').value = 50; }
+  pickNow(false);
+}
+
+var dragging = false;
+wheel.addEventListener('pointerdown', function(e){
+  dragging = true;
+  wheel.setPointerCapture(e.pointerId);
+  wheelAt(e);
+});
+wheel.addEventListener('pointermove', function(e){ if (dragging) wheelAt(e); });
+wheel.addEventListener('pointerup', function(){
+  if (!dragging) return;
+  dragging = false;
+  saveWindowColor(windowColor);
+});
+
+$('bright').oninput = function(){ pickHsv[2] = $('bright').value / 100; pickNow(false); };
+$('bright').onchange = function(){ saveWindowColor(windowColor); };
+
+$('hex').onchange = function(){
+  var v = $('hex').value.trim().toLowerCase();
+  if (/^[0-9a-f]{6}$/.test(v)) v = '#' + v;
+  if (/^#[0-9a-f]{6}$/.test(v)) setFromHex(v, true);
+  else $('hex').value = windowColor;
+};
+
+$('colreset').onclick = function(){ setFromHex(DEFAULT_WINDOW, true); };
+
+PRESETS.forEach(function(hex){
+  var b = document.createElement('button');
+  b.style.background = hex;
+  b.title = hex;
+  b.onclick = function(){ setFromHex(hex, true); };
+  $('presets').appendChild(b);
+});
+
+var picker = $('picker');
+function hidePicker(){ picker.classList.remove('on'); }
+
+$('colorbtn').onclick = function(){
+  if (picker.classList.contains('on')){ hidePicker(); return; }
+  picker.classList.add('on');
+  var b = $('colorbtn').getBoundingClientRect();
+  picker.style.top = (b.bottom + 6) + 'px';
+  picker.style.left = Math.max(6, Math.min(b.left,
+      window.innerWidth - picker.offsetWidth - 6)) + 'px';
+};
+window.addEventListener('mousedown', function(e){
+  if (!picker.contains(e.target) && e.target !== $('colorbtn')
+      && !$('colorbtn').contains(e.target)) hidePicker();
+});
+window.addEventListener('keydown', function(e){ if (e.key === 'Escape') hidePicker(); });
+window.addEventListener('resize', hidePicker);
 
 /* --------------------------------------------------- capture destination --- */
 
@@ -684,7 +1125,8 @@ function boot(){
   }
   api().get_defaults({}).then(function(d){
     if (d.panels) applyPanels(d.panels);
-    if (d.theme) setTheme(d.theme);
+    if (d.appearance === 'wheel') applyAppearance('wheel', d.window_color, d.theme);
+    else if (d.theme) setTheme(d.theme);
     if (d.save_dir) $('capdirc').textContent = d.save_dir;
     if (d.autosave !== undefined) $('capauto').checked = d.autosave !== false;
     if (d.activity_log !== undefined) applyActivityLog(d.activity_log !== false);

@@ -105,6 +105,9 @@ Diagnostics that need no board:
   dist\b360_console.exe --selftest     assemble and exit; reports both pages,
                                        the modules, pywebview and pyserial
   dist\b360_console.exe --smoke 5      open both windows, then close them
+  dist\b960_console.exe --contrast-sweep
+                                       check the colour wheel's palette over
+                                       ~2600 colours (needs a display)
 
   The same two flags work on b360_console_app.py when running from source.
 
@@ -189,12 +192,13 @@ One source tree builds a console for several products. The product name is a
 build argument, and everything the operator can see is derived from it:
 
     build_console_exe.bat          ->  dist\b360_console.exe   (terminal + viewer)
-    build_console_exe.bat B960     ->  dist\b960_console.exe   (terminal only)
+    build_console_exe.bat B960     ->  dist\b960_console.exe   (terminal only,
+                                                               colour wheel)
 
-  products\<name>.json  three fields: "name", "blurb" (the exe's Properties ->
-                        Details description) and "panels". Copy TEMPLATE.json to
-                        add one. An unknown name fails the build rather than
-                        quietly producing the default.
+  products\<name>.json  "name", "blurb" (the exe's Properties -> Details
+                        description), "panels" and, optionally, "appearance".
+                        Copy TEMPLATE.json to add one. An unknown name fails the
+                        build rather than quietly producing the default.
 
   product.py            resolves the active product and derives the rest: the
                         exe name, window titles, Documents\<name> captures, the
@@ -221,6 +225,21 @@ the one place a page is loaded. --selftest fails if any token survives.
   into the activity log, the way Api.capture()'s echo()/flush() pair does. The
   board's front panel indicates received commands, so a command the operator
   did not type must still be visible to them.
+
+  APPEARANCE -- "lightdark" (the default) is the Light/Dark select. "wheel"
+  replaces it with a colour wheel: the operator picks the window colour and
+  paletteFrom() in b360_console.html derives every other colour from it, each
+  solved to a minimum contrast against what it sits on -- 7:1 for terminal
+  text, 4.5:1 for all other text, 3:1 for borders, the status dot and the
+  Connect button. The header and footer take the pick exactly; the terminal
+  pane takes the same hue moved lighter or darker only as far as 7:1 needs,
+  because on a mid-tone (around #777) no text colour can reach 7:1 at all.
+  --contrast-sweep runs that check in the real webview and fails on any miss;
+  run it after touching the palette code.
+
+  The wheel styles the terminal page only, so a profile combining it with the
+  waveform panel is refused. The pick is saved as "window_color" in the shared
+  settings; products without the wheel never read it and do not remove it.
 
 Run from source with a product:  python b360_console_app.py --product B960
 
