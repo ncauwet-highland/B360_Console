@@ -1867,8 +1867,9 @@ if (window.B360_PRELOAD && window.B360_PRELOAD.length){
     say('Loading ' + pre.length + ' file(s)…');
     for (i = 0; i < pre.length; i++)
       if (loadText(pre[i].text, pre[i].name)) ok++;
-    renderAll();
-    if (ok) fitAll(); else draw();
+    /* tracesChanged, not renderAll: it runs applyAlign(), which is what measures
+       the first cycle. Without it a preloaded file read "no rising edge". */
+    tracesChanged(!!ok);
   })();
 }
 </script>

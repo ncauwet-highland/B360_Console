@@ -438,7 +438,7 @@ class Api:
         # An empty line is deliberately still sent: the firmware answers a line
         # with no command on it with its model name.
         line = opts.get("line", "")
-        reply = app.board.command(line, timeout=float(opts.get("timeout") or 20.0))
+        reply = app.board.command(line, timeout=float(opts.get("timeout") or 60.0))
         if line.strip().lower() == "id" and reply.strip():
             from b360_link import strip_frame
             flat = " ".join(strip_frame(reply).replace("\r", "\n").split())

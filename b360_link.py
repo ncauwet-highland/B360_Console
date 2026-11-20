@@ -50,6 +50,22 @@ DRAIN_SETTLE_S = 0.02
 #: End of a complete reply: the last token's "; " plus the frame's closing CRLF.
 REPLY_END = b"; \r\n"
 
+#: End of a multi-line dump (FR, STATUS, HElp, ID): its last line's ending plus the
+#: frame's closing CRLF. Only trusted once the reply has non-whitespace in it,
+#: because the frame opens with "\r\n" and some replies start with another.
+DUMP_ENDS = (b"\r\n\r\n", b"\n\r\r\n")
+
+#: Quiet time that confirms a DUMP_ENDS really is the end. Not zero: the same
+#: bytes also occur mid-reply, and format_and_send() makes every call its own TCP
+#: segment, so a chunk can end on one -- NE sends " Network Configuration\r\n\r\n"
+#: as a single call and was cut off right there. Consecutive sends are ~ms apart.
+DUMP_SETTLE_S = 0.25
+
+#: Quiet time that ends a reply with no recognised terminator. Only applies once
+#: the reply has content and sits on a line ending, so a command that blocks
+#: before printing (FR: 300 ms, bare FR: ~4.5 s) is waited out, not cut off.
+DEFAULT_IDLE_GAP = 1.0
+
 #: What "pressing Enter" sends. Selectable because the two transports disagree:
 #:
 #: Over TCP the whole write is taken as one line, so any of the three works and
@@ -108,15 +124,17 @@ class LinkError(Exception):
 class _Reader:
     """Shared read loop. Subclasses provide `_recv()` and `_send()`."""
 
-    def read_reply(self, timeout=DEFAULT_TIMEOUT, idle_gap=0.20,
+    def read_reply(self, timeout=DEFAULT_TIMEOUT, idle_gap=DEFAULT_IDLE_GAP,
                    terminator=REPLY_END):
         """Collect one reply.
 
-        Three ways to stop, in priority order: the terminator arrives; the link
-        goes quiet for `idle_gap` with something already collected; or `timeout`
-        expires. The idle-gap fallback matters because a few commands (the help
-        menus, `ID`) do not end in a value token, and `ID` even emits "\\n\\r"
-        rather than "\\r\\n".
+        Ways to stop, in priority order: the terminator arrives; a dump ending
+        (DUMP_ENDS) after real content is followed by DUMP_SETTLE_S of quiet; the
+        link goes quiet for `idle_gap` with content collected and the buffer on a
+        line ending; or `timeout` expires. The firmware sends the frame's opening "\\r\\n" before
+        running the command, so a whitespace-only buffer never ends the read --
+        that is what cut off FR, which blocks 300 ms before printing anything.
+        `ID` emits "\\n\\r" rather than "\\r\\n", hence both line endings.
         """
         buf = bytearray()
         deadline = time.monotonic() + timeout
@@ -131,8 +149,13 @@ class _Reader:
                 last_rx = time.monotonic()
                 if terminator and buf.endswith(terminator):
                     break
-            elif buf and last_rx is not None and (time.monotonic() - last_rx) >= idle_gap:
-                break
+            elif last_rx is not None and buf.strip() and buf.endswith((b"\n", b"\r")):
+                # A line carrying WA/WU waits widens idle_gap; keep that wait
+                # whole rather than letting a dump ending shortcut it.
+                gap = (DUMP_SETTLE_S if buf.endswith(DUMP_ENDS)
+                       and idle_gap <= DEFAULT_IDLE_GAP else idle_gap)
+                if (time.monotonic() - last_rx) >= gap:
+                    break
         return bytes(buf)
 
     def drain(self, settle=DRAIN_SETTLE_S):
@@ -353,7 +376,7 @@ class Board:
     def name(self):
         return self.transport.name
 
-    def command(self, line, timeout=DEFAULT_TIMEOUT, idle_gap=0.20):
+    def command(self, line, timeout=DEFAULT_TIMEOUT, idle_gap=DEFAULT_IDLE_GAP):
         """Send one command line and return its reply as text.
 
         One command per write, reply read before the next write -- see the
