@@ -2,7 +2,7 @@
 # Build a standalone console AppImage for one product -- the Linux counterpart
 # of build_console_exe.bat.
 #
-#   ./build_console_appimage.sh          ->  dist/b360_console.AppImage
+#   ./build_console_appimage.sh          ->  dist/B360TachView.AppImage
 #   ./build_console_appimage.sh B960     ->  dist/b960_console.AppImage, terminal only
 #
 # The product profile drives everything exactly as it does for the .exe: window
@@ -47,10 +47,10 @@ PY="$VENV/bin/python"
 # resource, which this build simply does not use.
 "$PY" tools/gen_build_files.py "$PRODUCT_ARG"
 
-# Read the derived values back: EXE, PRODUCT, HAS_WAVEFORM.
-EXE= PRODUCT= HAS_WAVEFORM=
+# Read the derived values back: EXE, PRODUCT, TITLE, HAS_WAVEFORM.
+EXE= PRODUCT= TITLE= HAS_WAVEFORM=
 while IFS='=' read -r k v; do
-  case "$k" in EXE|PRODUCT|HAS_WAVEFORM) printf -v "$k" '%s' "${v%$'\r'}";; esac
+  case "$k" in EXE|PRODUCT|TITLE|HAS_WAVEFORM) printf -v "$k" '%s' "${v%$'\r'}";; esac
 done < gen/build.env
 [ -n "$EXE" ] || fail "could not read gen/build.env"
 
@@ -114,7 +114,7 @@ ln -s "$EXE.png" "$APPDIR/.DirIcon"
 cat > "$APPDIR/$EXE.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=$PRODUCT Console
+Name=$TITLE
 Comment=$PRODUCT terminal$( [ "$HAS_WAVEFORM" = "1" ] && echo " and waveform viewer" )
 Exec=$EXE %F
 Icon=$EXE

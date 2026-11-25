@@ -23,12 +23,12 @@ VSVersionInfo(
       StringTable(
         '040904B0',      # US English, Unicode
         [StringStruct('CompanyName', 'Highland Technology'),
-         StringStruct('FileDescription', '{{PRODUCT}} Console - {{BLURB}}'),
+         StringStruct('FileDescription', '{{TITLE}} - {{PRODUCT}} {{BLURB}}'),
          StringStruct('FileVersion', '1.0.0.0'),
          StringStruct('InternalName', '{{EXE}}'),
          StringStruct('LegalCopyright', 'Copyright (c) Highland Technology, Inc.'),
          StringStruct('OriginalFilename', '{{EXE}}.exe'),
-         StringStruct('ProductName', '{{PRODUCT}} Console'),
+         StringStruct('ProductName', '{{TITLE}}'),
          StringStruct('ProductVersion', '1.0.0.0')])
     ]),
     VarFileInfo([VarStruct('Translation', [0x0409, 1200])])

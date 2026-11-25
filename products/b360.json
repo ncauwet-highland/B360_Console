@@ -1,5 +1,6 @@
 {
   "name": "B360",
+  "app": "B360TachView",
   "blurb": "terminal and waveform viewer",
   "panels": ["waveform"]
 }

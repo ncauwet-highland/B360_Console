@@ -1,7 +1,7 @@
 @echo off
 REM Build a standalone console executable for one product.
 REM
-REM   build_console_exe.bat            ->  B360 (the default)
+REM   build_console_exe.bat            ->  dist\B360TachView.exe (B360, the default)
 REM   build_console_exe.bat B960       ->  dist\b960_console.exe, terminal only
 REM
 REM The product name selects products\<name>.json, and everything the operator
@@ -34,7 +34,7 @@ REM build\, which is PyInstaller's workpath and which --clean deletes. Fails
 REM loudly on an unknown product name rather than quietly building the default.
 "%VENV%\Scripts\python.exe" tools\gen_build_files.py "%PRODUCT_ARG%" || goto :fail
 
-REM Read the derived values back: EXE, PRODUCT, VERSION_FILE, HAS_WAVEFORM.
+REM Read the derived values back: EXE, PRODUCT, TITLE, VERSION_FILE, HAS_WAVEFORM.
 for /f "usebackq tokens=1,* delims==" %%a in ("gen\build.env") do set "%%a=%%b"
 if "%EXE%"=="" echo Could not read gen\build.env & goto :fail
 

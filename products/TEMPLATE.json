@@ -6,6 +6,11 @@
     "name   the product as the operator sees it. Everything else is derived:",
     "       the exe (<lowercase>_console.exe), the window titles, the captures",
     "       folder (Documents\\<name> captures) and the capture file prefix.",
+    "app    optional. The application's own name, e.g. \"B360TachView\", used",
+    "       for the exe and the window titles instead of <lowercase>_console.exe",
+    "       and \"<name> Console\", and for everything the waveform window",
+    "       shows or writes: captures folder, capture files and their header,",
+    "       saved plots. Letters, digits, _ . - only.",
     "blurb  one short phrase for the exe's Properties -> Details description.",
     "panels optional GUI windows beyond the terminal. [] is terminal-only.",
     "       Known ids live in PANELS in b360_console_app.py; today that is",
@@ -17,6 +22,7 @@
     "       the terminal only, so do not combine it with the waveform panel."
   ],
   "name": "B560",
+  "app": "",
   "blurb": "terminal",
   "panels": [],
   "appearance": "lightdark"

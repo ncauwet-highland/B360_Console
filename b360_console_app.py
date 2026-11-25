@@ -21,10 +21,10 @@ Closing the waveform window hides it rather than destroying it, so the traces
 loaded in it survive being closed and reopened.
 
 Usage:
-    b360_console.exe [capture.csv ...]
-    b360_console.exe --selftest            # assemble and exit, no window
-    b360_console.exe --smoke 4             # open, then close after 4 seconds
-    b360_console.exe --contrast-sweep      # check the colour wheel's palette
+    B360TachView.exe [capture.csv ...]
+    B360TachView.exe --selftest            # assemble and exit, no window
+    B360TachView.exe --smoke 4             # open, then close after 4 seconds
+    b960_console.exe --contrast-sweep      # check the colour wheel's palette
 """
 
 import base64
@@ -82,7 +82,7 @@ asset = product.asset           #< re-exported; product.py owns it (see its docs
 def read_asset(name):
     """Read a bundled page with the product tokens filled in.
 
-    The one choke point for loading a page, so {{PRODUCT}}/{{EXE}} cannot be
+    The one choke point for loading a page, so the product tokens cannot be
     missed. inject() splices preloaded CSV in afterwards, which is the right
     order: data must never be token-substituted.
     """
@@ -292,7 +292,6 @@ RETRY_BACKOFF = (1.0, 2.0, 4.0, 8.0)
 PANELS = {
     "waveform": {
         "page":   "b360_wave_viewer.html",
-        "title":  "%s Waveform",          #< % the product name
         "label":  "the waveform viewer",  #< how a refusal names it
         "ui":     ("plotwin", "capbar", "wfhint"),   #< console elements it owns
         "writes": False,
@@ -503,13 +502,13 @@ class Api:
                                window=int(opts.get("window") or cap.DEFAULT_WINDOW),
                                retries=int(opts.get("retries") or 2),
                                progress=progress, echo=echo,
-                               product=product.P.name)
+                               product=product.P.brand)
         finally:
             flush()
             app.capturing = False
 
         if app.board_id:
-            banner = "# %s waveform capture\n" % product.P.name
+            banner = "# %s waveform capture\n" % product.P.brand
             text = text.replace(banner, banner + "# board: %s\n" % app.board_id, 1)
 
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -553,7 +552,7 @@ class Api:
             if step > 0:
                 rate = 1.0 / step
 
-        head = ["# %s waveform capture" % product.P.name]
+        head = ["# %s waveform capture" % product.P.brand]
         if app.board_id:
             head.append("# board: %s" % app.board_id)
         if app.board:
@@ -968,7 +967,7 @@ class App:
         html = inject(read_asset(PANELS["waveform"]["page"]), self.preload)
         self.plot_url = write_temp(html, "wave")
         self.plot = webview.create_window(
-            PANELS["waveform"]["title"] % product.P.name,
+            product.P.waveform_title,
             url=file_url(self.plot_url),
             js_api=self.api, width=1180, height=780, min_size=(760, 520),
             text_select=True)
@@ -1192,7 +1191,7 @@ def main(argv):
     # and no transcript can be copied out. The pages narrow it back down to the
     # parts worth copying; see the selection rules in b360_console.html.
     app.console = webview.create_window(
-        product.P.title, url=file_url(console_url), js_api=app.api,
+        product.P.window_title, url=file_url(console_url), js_api=app.api,
         width=1040, height=720, min_size=(680, 440), text_select=True)
 
     def console_closing():

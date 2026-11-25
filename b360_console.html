@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{PRODUCT}} Console</title>
+<title>{{TITLE}} [Highland Technology]</title>
 <!--
   Terminal page for the {{PRODUCT}} console application.
 
@@ -143,7 +143,7 @@ footer{flex:none;display:flex;gap:8px;align-items:center;padding:8px 12px;
 <body>
 
 <header>
-  <h1>{{PRODUCT}} Console</h1>
+  <h1>{{TITLE}}</h1>
   <select id="kind">
     <option value="tcp">TCP</option>
     <option value="serial">USB serial</option>
@@ -1136,11 +1136,11 @@ function boot(){
     if (d.eol_serial) eolDefaults.serial = d.eol_serial;
     if (d.eol) { $('eol').value = d.eol; eolPinned = true; }
     if (d.kind) { $('kind').value = d.kind; $('kind').onchange(); }
-    writeLine('{{PRODUCT}} console ready. Connect to begin.', 'note');
+    writeLine('{{TITLE}} ready. Connect to begin.', 'note');
     writeLine('The board allows one connection at a time — close PuTTY or '
             + 'TeraTerm first.', 'note');
   }).catch(function(){
-    writeLine('{{PRODUCT}} console ready. Connect to begin.', 'note');
+    writeLine('{{TITLE}} ready. Connect to begin.', 'note');
   });
 }
 

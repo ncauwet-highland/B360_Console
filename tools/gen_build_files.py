@@ -52,15 +52,15 @@ def main(argv):
     # Every field, or the exe silently falls back to the default for the missing
     # one -- a B960 built without "appearance" would come up as Light/Dark.
     with open(os.path.join(GEN, "product.json"), "w", encoding="utf-8") as fh:
-        json.dump({"name": p.name, "blurb": p.blurb, "panels": list(p.panels),
-                   "appearance": p.appearance},
+        json.dump({"name": p.name, "app": p.app, "blurb": p.blurb,
+                   "panels": list(p.panels), "appearance": p.appearance},
                   fh, indent=2)
         fh.write("\n")
 
-    # Version resource. fill() handles PRODUCT/EXE; BLURB is only used here.
+    # Version resource. fill() handles the product tokens; BLURB is only used here.
     with open(TEMPLATE, "r", encoding="utf-8") as fh:
         res = p.fill(fh.read()).replace("{{BLURB}}", p.blurb)
-    left = [t for t in ("{{PRODUCT}}", "{{EXE}}", "{{BLURB}}") if t in res]
+    left = list(p.leftover_tokens(res)) + [t for t in ("{{BLURB}}",) if t in res]
     if left:
         sys.stderr.write("gen_build_files: %s left unsubstituted in %s\n"
                          % (" ".join(left), TEMPLATE))
@@ -73,6 +73,7 @@ def main(argv):
     # tree sits on a mapped UNC drive (see the note in build_console_exe.bat).
     env = {
         "PRODUCT": p.name,
+        "TITLE": p.title,
         "EXE": p.exe,
         "VERSION_FILE": version_file.replace("/", os.sep),
         "HAS_WAVEFORM": "1" if p.has("waveform") else "0",
@@ -82,6 +83,7 @@ def main(argv):
             fh.write("%s=%s\n" % (k, env[k]))
 
     print("product : %s" % p.name)
+    print("title   : %s" % p.title)
     print("exe     : %s" % p.exe)
     print("panels  : %s" % (", ".join(p.panels) or "none (terminal only)"))
     print("look    : %s" % p.appearance)

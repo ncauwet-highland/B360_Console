@@ -20,12 +20,13 @@ User-facing documentation:
  THE B360 CONSOLE
 --------------------------------------------------------------------------------
 
-Build with:   build_console_exe.bat [PRODUCT]  ->  dist/<product>_console.exe
-              no argument builds B360; "build_console_exe.bat B960" builds the
-              terminal-only B960. See PRODUCTS below.
+Build with:   build_console_exe.bat [PRODUCT]  ->  dist/<exe>.exe
+              no argument builds B360 as dist/B360TachView.exe;
+              "build_console_exe.bat B960" builds the terminal-only
+              dist/b960_console.exe. See PRODUCTS below.
 
      Linux:   ./build_console_appimage.sh [PRODUCT]
-                                  ->  dist/<product>_console.AppImage
+                                  ->  dist/<exe>.AppImage
               Same products, same generator. See LINUX below.
 
 Source, in dependency order (lower items depend on higher ones):
@@ -73,6 +74,10 @@ Source, in dependency order (lower items depend on higher ones):
       a binary with blank Properties -> Details is what an unidentified file
       looks like.
 
+      console.ico is generated from logo.png by tools/make_icon.py (needs
+      Pillow): the logo's hills and sun, no lettering, stretched to fill the
+      square. Rerun it rather than editing the .ico; --help has the knobs.
+
   build_console_exe.bat
       Creates a throwaway venv in %TEMP% (your system Python is untouched),
       builds the one-file executable, runs its self-test, and writes the
@@ -102,9 +107,9 @@ Source, in dependency order (lower items depend on higher ones):
       files.
 
 Diagnostics that need no board:
-  dist\b360_console.exe --selftest     assemble and exit; reports both pages,
+  dist\B360TachView.exe --selftest     assemble and exit; reports both pages,
                                        the modules, pywebview and pyserial
-  dist\b360_console.exe --smoke 5      open both windows, then close them
+  dist\B360TachView.exe --smoke 5      open both windows, then close them
   dist\b960_console.exe --contrast-sweep
                                        check the colour wheel's palette over
                                        ~2600 colours (needs a display)
@@ -117,9 +122,11 @@ Diagnostics that need no board:
 --------------------------------------------------------------------------------
 
 Plain CSV, "time,voltage,comparator", with "#" metadata comment lines above the
-header:
+header. The first line names what took it: "# B360TachView waveform capture"
+from the B360 application, "# B360 waveform capture" from b360_capture.py run
+on its own:
 
-  # B360 waveform capture
+  # B360TachView waveform capture
   # source: tcp://B360-0004.local:5007 (192.168.0.123)
   # sample_rate_hz: 10000
   # samples: 4096 (from address 0)
@@ -191,18 +198,19 @@ module, sys.exit(2) for usage and connection errors.
 One source tree builds a console for several products. The product name is a
 build argument, and everything the operator can see is derived from it:
 
-    build_console_exe.bat          ->  dist\b360_console.exe   (terminal + viewer)
+    build_console_exe.bat          ->  dist\B360TachView.exe  (terminal + viewer)
     build_console_exe.bat B960     ->  dist\b960_console.exe   (terminal only,
                                                                colour wheel)
 
   products\<name>.json  "name", "blurb" (the exe's Properties -> Details
-                        description), "panels" and, optionally, "appearance".
-                        Copy TEMPLATE.json to add one. An unknown name fails the
-                        build rather than quietly producing the default.
+                        description), "panels" and, optionally, "appearance"
+                        and "app". Copy TEMPLATE.json to add one. An unknown
+                        name fails the build rather than quietly producing the
+                        default.
 
   product.py            resolves the active product and derives the rest: the
-                        exe name, window titles, Documents\<name> captures, the
-                        <name>_capture_<stamp>.csv prefix and the PNG fallback
+                        exe name, window titles, the Documents\... captures
+                        folder, the capture file prefix and the PNG fallback
                         name. Stdlib only, so b360_capture.py can stay a
                         standalone CLI with no dependency on the application.
 
@@ -210,9 +218,31 @@ Identifiers are NOT derived. Module names, page filenames and the JS bridge
 names (b360_event, b360_link_state, window.B360_PRELOAD) are a Python<->HTML
 contract, not branding, and keep their b360_ prefix whatever the product.
 
-The pages carry {{PRODUCT}}, {{EXE}} and {{BINARY}} tokens ({{BINARY}} is the
-file the operator runs: <exe>.exe on Windows, <exe>.AppImage elsewhere), substituted in read_asset() --
-the one place a page is loaded. --selftest fails if any token survives.
+  APP NAME -- by default the application is "<name> Console", built as
+  <lowercase>_console.exe. A profile may name it instead with "app": B360's
+  is "B360TachView", so the B360 build is B360TachView.exe and its windows
+  are "B360TachView [Highland Technology]" and "B360TachView Waveform
+  [Highland Technology]". Its captures go to Documents\B360TachView captures
+  as B360TachView_capture_<stamp>.csv, and an untitled plot saves as
+  B360TachView_waveform_<stamp>.png. Every capture starts "# B360TachView
+  waveform capture", and the viewer's heading is "B360TachView Waveform
+  Viewer". Without "app" these are Documents\<name> captures,
+  <lowercase>_capture_<stamp>.csv, "# <name> waveform capture",
+  <name>_waveform_<stamp>.png and "<name> Waveform Viewer".
+
+  "app" renames the application, not the device: the B360-1234.local host
+  hint keeps the product name, as does b360_capture.py run on its own. Nor
+  does it rename the settings file
+  (<config>\b360_console\settings.json): that is one file shared by every
+  product, with a section per product, so two consoles open at once do not
+  overwrite each other.
+
+The pages carry {{PRODUCT}}, {{TITLE}}, {{BRAND}}, {{EXE}} and {{BINARY}}
+tokens, substituted in read_asset() -- the one place a page is loaded.
+{{PRODUCT}} is the device ("B360"), {{TITLE}} the application ("B360TachView",
+"B960 Console"), {{BRAND}} the same without a generic " Console" ("B960"), and
+{{BINARY}} the file the operator runs: <exe>.exe on Windows, <exe>.AppImage
+elsewhere. --selftest fails if any token survives.
 
   PANELS -- optional GUI windows beyond the terminal, listed in PANELS in
   b360_console_app.py and selected per product. "waveform" is the only one
@@ -248,7 +278,7 @@ Run from source with a product:  python b360_console_app.py --product B960
  LINUX
 --------------------------------------------------------------------------------
 
-    ./build_console_appimage.sh          ->  dist/b360_console.AppImage
+    ./build_console_appimage.sh          ->  dist/B360TachView.AppImage
     ./build_console_appimage.sh B960     ->  dist/b960_console.AppImage
 
 The AppImage is the Linux counterpart of the .exe: one file, nothing to
